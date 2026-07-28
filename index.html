@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="家庭财务助手">
+  <title>家庭财务助手</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body data-scheme="redUp">
+  <div id="app">
+    <header class="topbar">
+      <div class="top-title" id="top-title">资产总览</div>
+      <button class="eye-btn" id="eye-btn" title="隐藏/显示金额">👁</button>
+    </header>
+    <main id="page"></main>
+    <nav class="tabbar">
+      <button data-tab="home"><span class="t-ico">🏠</span><span>首页</span></button>
+      <button data-tab="invest"><span class="t-ico">📈</span><span>投资专区</span></button>
+      <button data-tab="ledger"><span class="t-ico">🧾</span><span>收支明细</span></button>
+      <button data-tab="profile"><span class="t-ico">👤</span><span>个人中心</span></button>
+    </nav>
+  </div>
+
+  <!-- 登录 / 设置口令遮罩（仅检测到后端时显示） -->
+  <div id="auth-screen" class="auth-screen hidden">
+    <div class="auth-card">
+      <div class="auth-title" id="auth-title">设置访问口令</div>
+      <div class="auth-desc" id="auth-desc"></div>
+      <input type="password" id="auth-pass" class="auth-input" placeholder="请输入口令（至少4位）" autocomplete="off">
+      <div class="auth-err" id="auth-err"></div>
+      <button class="auth-btn" id="auth-submit">确定</button>
+    </div>
+  </div>
+
+  <script src="./js/store.js"></script>
+  <script src="./js/remote.js"></script>
+  <script src="./js/api.js"></script>
+  <script src="./js/ui.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>

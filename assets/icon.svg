@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="40" fill="#3b82f6"/>
+  <path d="M40 128 L72 92 L100 110 L152 56" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="152" cy="56" r="10" fill="#ffffff"/>
+  <text x="40" y="160" font-family="-apple-system,Segoe UI,sans-serif" font-size="30" font-weight="700" fill="#eaf2ff">财务</text>
+</svg>
