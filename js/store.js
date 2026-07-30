@@ -27,6 +27,8 @@
       boards,
       trades: [],
       snapshots: [],
+      dcaPlans: [],
+      dcaDone: {},
     };
   }
 
@@ -44,6 +46,8 @@
     }
     d.trades = Array.isArray(s.trades) ? s.trades : [];
     d.snapshots = Array.isArray(s.snapshots) ? s.snapshots : [];
+    d.dcaPlans = Array.isArray(s.dcaPlans) ? s.dcaPlans : [];
+    d.dcaDone = (s.dcaDone && typeof s.dcaDone === 'object') ? s.dcaDone : {};
     return d;
   }
 
@@ -125,15 +129,17 @@
 
   /* ---------------- 交易记录 ---------------- */
   function addTrade(t) {
+    const action = t.action === 'sell' ? 'sell' : 'buy';
     const rec = {
       id: uid(),
       board: t.board,
       code: (t.code || '').toString().trim(),
-      action: t.action === 'sell' ? 'sell' : 'buy',
+      action: action,
       shares: Math.max(0, Number(t.shares) || 0),
       price: Math.max(0, Number(t.price) || 0),
       time: t.time || Date.now(),
       note: (t.note || '').toString().slice(0, 60),
+      dca: !!(t.dca && action === 'buy'),
     };
     state.trades.unshift(rec);
     const b = state.boards[rec.board];
@@ -150,6 +156,12 @@
         }
         save();
       }
+    }
+    // 定投计划：若本次为带 dca 的买入，标记匹配计划已完成本期
+    if (rec.action === 'buy' && rec.dca && rec.board && rec.code) {
+      state.dcaPlans.forEach(p => {
+        if (p.enabled !== false && p.board === rec.board && p.code === rec.code) state.dcaDone[p.id] = rec.time;
+      });
     }
     save();
     return rec;
@@ -172,6 +184,23 @@
   function updateSettings(patch) { Object.assign(state.settings, patch); save(); }
   function resetAll() { state = defaultState(); save(); }
   function replaceState(parsed) { state = mergeDefaults(parsed); save(); }
+
+  /* ---------------- 定投计划 ---------------- */
+  function addDcaPlan(plan) {
+    const rec = Object.assign({ id: uid(), enabled: true, lastDone: 0 }, plan);
+    state.dcaPlans.push(rec);
+    save();
+  }
+  function updateDcaPlan(id, patch) {
+    const p = state.dcaPlans.find(x => x.id === id); if (!p) return;
+    Object.assign(p, patch);
+    save();
+  }
+  function deleteDcaPlan(id) {
+    state.dcaPlans = state.dcaPlans.filter(x => x.id !== id);
+    delete state.dcaDone[id];
+    save();
+  }
 
   /* ---------------- 计算规则 ---------------- */
   function cashTotal(boardKey) {
@@ -221,6 +250,7 @@
     addHolding, updateHolding, deleteHolding,
     addTrade, deleteTrade,
     addSnapshot, updateSettings, resetAll, replaceState,
+    addDcaPlan, updateDcaPlan, deleteDcaPlan,
     cashTotal, investTotal, boardTotal, boardInvestTodayProfit, boardInvestTotalProfit,
     globalTotals, allHoldings, allCash,
   };

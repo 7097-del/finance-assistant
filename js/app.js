@@ -42,6 +42,40 @@
       '<option value="' + b.key + '"' + (selected === b.key ? ' selected' : '') + '>' + b.name + '</option>').join('');
   }
 
+  /* ---------------- 定投计划：到期计算 ---------------- */
+  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+  function nextDue(plan, fromTs) {
+    const from = new Date(fromTs);
+    if (plan.freq === 'weekly') {
+      const tgt = ((Number(plan.param) || 1) % 7 + 7) % 7; // 1=周一..7=周日 → 0=周日..6=周六
+      let diff = (tgt - from.getDay() + 7) % 7; if (diff === 0) diff = 7;
+      const d = new Date(from); d.setDate(d.getDate() + diff); d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    if (plan.freq === 'interval') {
+      const n = Math.max(1, Number(plan.param) || 1);
+      return fromTs + n * 86400000;
+    }
+    // monthly
+    const day = Math.min(Math.max(1, Number(plan.param) || 1), 28);
+    const y = from.getFullYear(), m = from.getMonth();
+    let cand = new Date(y, m, Math.min(day, daysInMonth(y, m)), 0, 0, 0, 0);
+    if (cand.getTime() <= fromTs) {
+      cand = new Date(y, m + 1, Math.min(day, daysInMonth(y, m + 1)), 0, 0, 0, 0);
+    }
+    return cand.getTime();
+  }
+  function isDue(plan) {
+    const last = (Store.state.dcaDone && Store.state.dcaDone[plan.id]) || 0;
+    return Date.now() >= nextDue(plan, last || 0);
+  }
+  function freqLabel(plan) {
+    if (plan.freq === 'weekly') return '每周' + ['日', '一', '二', '三', '四', '五', '六'][((Number(plan.param) || 1) % 7)];
+    if (plan.freq === 'interval') return '每' + (Number(plan.param) || 1) + '天';
+    return '每月' + (Number(plan.param) || 1) + '号';
+  }
+  function boardName(key) { const d = Store.BOARD_DEFS.find(b => b.key === key); return d ? d.name : key; }
+
   /* ---------------- 净值刷新 ---------------- */
   async function getQuote(code) {
     if (window.Remote && Remote.isEnabled()) return await Remote.quote(code);
@@ -178,24 +212,46 @@
 
   function openTradeSheet(preset) {
     preset = preset || {};
+    const isSell = preset.action === 'sell';
+    const dcaField = isSell ? [] : [{
+      key: 'dca', label: '类型', type: 'segmented', value: preset.dca ? 'yes' : 'no',
+      options: [{ value: 'no', label: '普通买入' }, { value: 'yes', label: '定投' }],
+    }];
     UI.sheet({
-      title: preset.action === 'sell' ? '卖出登记' : '买入登记',
+      title: isSell ? '卖出登记' : (preset.dca ? '定投登记' : '买入登记'),
       fields: [
         { key: 'board', label: '归属板块', type: 'select', value: preset.board || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
         { key: 'code', label: '基金代码', type: 'text', value: preset.code || '', placeholder: '如 110011' },
         { key: 'action', label: '方向', type: 'select', value: preset.action || 'buy', options: [{ value: 'buy', label: '买入' }, { value: 'sell', label: '卖出' }] },
-        { key: 'shares', label: '交易份额', type: 'number', value: '', placeholder: '0.00' },
-        { key: 'price', label: '成交净值', type: 'number', value: '', placeholder: '0.00' },
-        { key: 'note', label: '备注', type: 'text', placeholder: '可选' },
+        ...dcaField,
+        { key: 'shares', label: '交易份额', type: 'number', value: preset.shares || '', placeholder: '0.00' },
+        { key: 'price', label: '成交净值', type: 'number', value: preset.price || '', placeholder: '0.00' },
+        { key: 'note', label: '备注', type: 'text', value: preset.note || '', placeholder: '可选' },
       ],
       submitText: '登记',
       onSubmit: (v) => {
         if (!/^\d{6}$/.test((v.code || '').trim())) throw new Error('请输入6位基金代码');
         if (!v.shares || Number(v.shares) <= 0) throw new Error('请输入有效份额');
         if (!v.price || Number(v.price) <= 0) throw new Error('请输入有效成交净值');
-        Store.addTrade({ board: v.board, code: v.code.trim(), action: v.action, shares: Number(v.shares), price: Number(v.price), note: v.note });
+        Store.addTrade({ board: v.board, code: v.code.trim(), action: v.action, shares: Number(v.shares), price: Number(v.price), note: v.note, dca: v.action === 'buy' && v.dca === 'yes' });
       },
     }).then(() => render());
+  }
+
+  function openSellBoard(boardKey) {
+    const list = Store.state.boards[boardKey] ? Store.state.boards[boardKey].invest : [];
+    if (!list || list.length === 0) { UI.toast('该板块暂无持仓，无法卖出'); return; }
+    const opts = list.map(h => ({ value: h.id, label: h.name + ' (' + h.code + ') · 份额 ' + UI.fmtNum(h.shares) }));
+    UI.sheet({
+      title: '卖出持仓',
+      fields: [{ key: 'id', label: '选择要卖出的基金', type: 'select', options: opts }],
+      submitText: '下一步',
+      onSubmit: (v) => {
+        const h = list.find(x => x.id === v.id);
+        if (h) openTradeSheet({ board: boardKey, code: h.code, action: 'sell' });
+        return true;
+      }
+    });
   }
 
   function openTransferSheet() {
@@ -214,6 +270,43 @@
         const t = Date.now();
         Store.addCash(v.from, { type: 'expense', amount: v.amount, note: (v.note ? v.note + ' · ' : '') + '调拨出', time: t });
         Store.addCash(v.to, { type: 'income', amount: v.amount, note: (v.note ? v.note + ' · ' : '') + '调拨入', time: t });
+      },
+    }).then(() => render());
+  }
+
+  function openDcaPlanSheet(edit) {
+    const p = edit || {};
+    const freq = p.freq || 'monthly';
+    const param = (p.param != null) ? p.param : 1;
+    const hint = freq === 'weekly' ? '1=周一…7=周日' : (freq === 'interval' ? '间隔天数' : '每月几号(1-28)');
+    UI.sheet({
+      title: edit ? '编辑定投计划' : '新增定投计划',
+      fields: [
+        { key: 'board', label: '归属板块', type: 'select', value: p.board || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
+        { key: 'code', label: '6位基金代码', type: 'text', value: p.code || '', placeholder: '如 110011' },
+        { key: 'name', label: '基金名称', type: 'text', value: (p.name && p.name !== '未命名基金') ? p.name : '', placeholder: '可选，刷新时自动获取' },
+        { key: 'freq', label: '频率', type: 'select', value: freq, options: [{ value: 'monthly', label: '每月固定日' }, { value: 'weekly', label: '每周固定日' }, { value: 'interval', label: '每隔N天' }] },
+        { key: 'param', label: '日期参数（' + hint + '）', type: 'number', value: param, placeholder: hint },
+        { key: 'shares', label: '默认定投份额', type: 'number', value: p.shares || '', placeholder: '0.00' },
+        { key: 'price', label: '默认成交净值', type: 'number', value: p.price || '', placeholder: '可选，记录时可改' },
+        { key: 'note', label: '备注', type: 'text', value: p.note || '', placeholder: '可选' },
+      ],
+      submitText: '保存',
+      onSubmit: (v) => {
+        if (!/^\d{6}$/.test((v.code || '').trim())) throw new Error('请输入6位基金代码');
+        const plan = {
+          board: v.board,
+          code: v.code.trim(),
+          name: v.name.trim(),
+          freq: v.freq,
+          param: Number(v.param) || 1,
+          shares: Math.max(0, Number(v.shares) || 0),
+          price: Math.max(0, Number(v.price) || 0),
+          note: (v.note || '').slice(0, 60),
+          enabled: true,
+        };
+        if (edit) { plan.id = p.id; Store.updateDcaPlan(p.id, plan); }
+        else Store.addDcaPlan(plan);
       },
     }).then(() => render());
   }
@@ -243,7 +336,9 @@
     const g = Store.globalTotals();
     const ring = buildRing();
     const boardsHtml = Store.BOARD_DEFS.map(b => renderBoardCard(b.key)).join('');
+    const reminder = renderDcaReminder();
     return '' +
+      (reminder ? reminder : '') +
       '<div class="total-card">' +
       '<div class="total-label">总资产（元）</div>' +
       '<div class="total-value">' + UI.fmtMoney(g.grandTotal) + '</div>' +
@@ -280,6 +375,22 @@
       '<div class="legend">' + legend + '</div></div>';
   }
 
+  function renderDcaReminder() {
+    const plans = (Store.state.dcaPlans || []).filter(p => p.enabled !== false && isDue(p));
+    if (plans.length === 0) return '';
+    const items = plans.map(p =>
+      '<div class="dca-item">' +
+      '<div class="dca-i-main">' +
+      '<div class="dca-i-name">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
+      '<div class="dca-i-sub">' + boardName(p.board) + ' · 应投 ' + UI.fmtNum(p.shares) + ' 份' + (p.price ? (' @ ' + UI.fmtNum(p.price)) : '') + '</div>' +
+      '</div>' +
+      '<button class="dca-rec-btn" data-action="dca-record" data-plan="' + p.id + '">记一笔</button>' +
+      '</div>').join('');
+    return '<div class="dca-reminder">' +
+      '<div class="dca-r-head">🔔 你有 ' + plans.length + ' 笔定投待记</div>' +
+      items + '</div>';
+  }
+
   function renderBoardCard(boardKey) {
     const def = Store.BOARD_DEFS.find(b => b.key === boardKey);
     const cash = Store.state.boards[boardKey].cash;
@@ -314,6 +425,7 @@
       '<span class="bd-label">📈 投资</span>' +
       '<span class="bd-val">' + UI.fmtMoney(investTotal) + '</span>' +
       '<button class="bd-add" data-action="add-invest-board" data-board="' + boardKey + '" title="新增基金持仓">＋</button>' +
+      '<button class="bd-sell" data-action="sell-invest-board" data-board="' + boardKey + '" title="卖出基金持仓">卖</button>' +
       '</div>' +
       '</div>';
     return '' +
@@ -370,6 +482,7 @@
 
   function renderHoldingRow(h) {
     const expanded = expandedHoldings.has(h.id);
+    const isDca = Store.state.trades.some(t => t.code === h.code && t.board === h.boardKey && t.dca);
     const w = periodReturn(h.navHistory, 7);
     const m = periodReturn(h.navHistory, 30);
     const q = periodReturn(h.navHistory, 90);
@@ -388,15 +501,13 @@
       '<div>近3月 ' + rt(q) + '</div><div>近1年 ' + rt(y) + '</div>' +
       '</div>' +
       '<div class="hd-actions">' +
-      '<button class="btn-mini" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
-      '<button class="btn-mini" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
       '<button class="btn-mini" data-action="edit-holding" data-board="' + h.boardKey + '" data-id="' + h.id + '">编辑</button>' +
       '<button class="btn-mini danger" data-action="delete-invest" data-board="' + h.boardKey + '" data-id="' + h.id + '">删除</button>' +
       '</div></div>' : '';
     return '' +
       '<div class="hold-row" data-action="expand" data-id="' + h.id + '">' +
       '<div class="hold-main">' +
-      '<div class="li-title">' + escapeHtml(h.name) + ' <span class="li-code">' + h.code + '</span></div>' +
+      '<div class="li-title">' + escapeHtml(h.name) + ' <span class="li-code">' + h.code + '</span>' + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
       '<div class="li-sub">' + h.boardName + ' · 份额 ' + UI.fmtNum(h.shares) + '</div>' +
       '</div>' +
       '<div class="hold-right">' +
@@ -405,6 +516,11 @@
       '<div class="li-pct ' + UI.changeClass(h.totalProfit) + '">累计 ' + UI.fmtMoney(h.totalProfit) + '</div>' +
       '</div>' +
       (expanded ? '<span class="expand-ico">▴</span>' : '<span class="expand-ico">▾</span>') +
+      '</div>' +
+      '<div class="hold-actions">' +
+      '<button class="btn-mini" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
+      '<button class="btn-mini dca-btn" data-action="dca" data-board="' + h.boardKey + '" data-id="' + h.id + '">定投</button>' +
+      '<button class="btn-mini" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
       '</div>' + detail;
   }
 
@@ -430,6 +546,7 @@
   /* ---------------- 渲染：个人中心 ---------------- */
   function renderProfile() {
     const s = Store.state.settings;
+    const plans = Store.state.dcaPlans || [];
     const schemeOpts = '<option value="redUp"' + (s.colorScheme === 'redUp' ? ' selected' : '') + '>红涨绿跌</option>' +
       '<option value="greenUp"' + (s.colorScheme === 'greenUp' ? ' selected' : '') + '>绿涨红跌</option>';
     const snapOpts = [10, 20, 30, 50, 100].map(n =>
@@ -444,6 +561,22 @@
       '<div class="pc-title">投资专区</div>' +
       '<div class="pc-row"><span>进入投资页自动刷新净值</span>' + toggle('autoRefreshInvest', s.autoRefreshInvest) + '</div>' +
       '<div class="pc-row"><span>刷新历史最大留存</span><select class="f-select" data-setting="snapshotLimit">' + snapOpts + '</select></div>' +
+      '</div>' +
+      '<div class="profile-card">' +
+      '<div class="pc-title">定投计划</div>' +
+      (plans.length === 0
+        ? '<div class="empty" style="padding:10px 0">还没有定投计划，点下方添加</div>'
+        : plans.map(p => {
+            const due = isDue(p);
+            return '<div class="dca-plan-row" data-action="edit-dca" data-id="' + p.id + '">' +
+              '<div class="dca-p-main">' +
+              '<div class="li-title">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
+              '<div class="li-sub">' + boardName(p.board) + ' · ' + freqLabel(p) + (due ? ' · <span class="due-tag">待记</span>' : '') + '</div>' +
+              '</div>' +
+              '<button class="btn-mini danger" data-action="delete-dca" data-id="' + p.id + '">删除</button>' +
+              '</div>';
+          }).join('')) +
+      '<div class="pc-row clickable" data-action="add-dca"><span>＋ 新增定投计划</span><span>›</span></div>' +
       '</div>' +
       '<div class="profile-card">' +
       '<div class="pc-title">数据管理</div>' +
@@ -505,6 +638,7 @@
     if (a === 'record') { openCashSheet(board); return; }
     if (a === 'add-cash-board') { openCashSheet(board); return; }
     if (a === 'add-invest-board') { openHoldingSheet(board, null); return; }
+    if (a === 'sell-invest-board') { openSellBoard(board); return; }
     if (a === 'add-cash') { openCashSheet(null); return; }
     if (a === 'refresh' || a === 'refresh-invest') { refreshAll(true); return; }
     if (a === 'transfer') { openTransferSheet(); return; }
@@ -530,6 +664,28 @@
     if (a === 'trade') {
       const h = Store.state.boards[board].invest.find(x => x.id === id);
       openTradeSheet({ board: board, code: h ? h.code : '', action: el.dataset.dir || 'buy' }); return;
+    }
+    if (a === 'dca') {
+      const h = Store.state.boards[board].invest.find(x => x.id === id);
+      openTradeSheet({ board: board, code: h ? h.code : '', action: 'buy', dca: true }); return;
+    }
+    if (a === 'dca-record') {
+      const plan = (Store.state.dcaPlans || []).find(x => x.id === el.dataset.plan);
+      if (!plan) return;
+      openTradeSheet({ board: plan.board, code: plan.code, action: 'buy', dca: true, shares: plan.shares, price: plan.price, note: plan.note });
+      return;
+    }
+    if (a === 'add-dca') { openDcaPlanSheet(null); return; }
+    if (a === 'edit-dca') {
+      const plan = (Store.state.dcaPlans || []).find(x => x.id === id);
+      if (plan) openDcaPlanSheet(plan);
+      return;
+    }
+    if (a === 'delete-dca') {
+      UI.confirm({ title: '删除定投计划', message: '确认删除该定投计划？已记录的定投交易保留。', okText: '删除' }).then(ok => {
+        if (ok) { Store.deleteDcaPlan(id); render(); }
+      });
+      return;
     }
     if (a === 'snapshot-history') { openSnapshotHistory(); return; }
     if (a === 'export') { exportData(); return; }
