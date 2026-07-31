@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-2';
+  const APP_VERSION = '2026-08-01-3';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -813,6 +813,7 @@
     const investTotal = Store.investTotal(boardKey);
     const boardTotal = Store.boardTotal(boardKey);
     const investProfit = Store.boardInvestTotalProfit(boardKey);
+    const investToday = Store.boardInvestTodayProfit(boardKey);
     const cashRows = cash.length === 0 ? '' : cash.map(c => cashRowHtml(c, boardKey)).join('');
     const investRows = invest.length === 0 ? '' : invest.map(h => investRowHtml(h, boardKey)).join('');
     const empty = (cash.length === 0 && invest.length === 0)
@@ -828,6 +829,7 @@
       '<div class="bh-left"><div class="board-name">' + def.name + '</div>' +
       '<div class="board-sub">现金 ' + UI.fmtMoney(cashTotal) + ' · 投资 ' + UI.fmtMoney(investTotal) + '</div></div>' +
       '<div class="bh-right"><div class="board-total">' + UI.fmtMoney(boardTotal) + '</div>' +
+      '<div class="board-today ' + UI.changeClass(investToday) + '">今日 ' + UI.fmtMoney(investToday) + '</div>' +
       '<div class="board-profit ' + UI.changeClass(investProfit) + '">累计 ' + UI.fmtMoney(investProfit) + '</div></div>' +
       '<span class="chev">▾</span>' +
       '</div>' +

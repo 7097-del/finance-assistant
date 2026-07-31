@@ -79,19 +79,20 @@ body {
 }
 .total-label { font-size: 13px; opacity: .85; }
 .total-value { font-size: 30px; font-weight: 700; margin: 4px 0; letter-spacing: .5px; }
-/* 总盈亏徽章：蓝底卡上红色看不清 → 改为带底色高对比徽章 */
+/* 总盈亏徽章：蓝底卡上改为实心高对比色块 + 白字，确保清晰可见 */
 .total-profit {
   display: inline-flex; align-items: center; gap: 6px;
-  margin-top: 8px; padding: 4px 12px; border-radius: 14px;
-  font-size: 13px; font-weight: 600;
+  margin-top: 8px; padding: 6px 14px; border-radius: 14px;
+  font-size: 14px; font-weight: 700; color: #fff;
 }
-.total-profit.tp-up { background: #fdecee; }
-.total-profit.tp-up .up { color: #c0392b; font-weight: 700; }
-.total-profit.tp-down { background: #e8f6ef; }
-.total-profit.tp-down .down { color: #1e8a5b; font-weight: 700; }
-.total-profit.tp-flat { background: rgba(255,255,255,.85); }
-.total-profit.tp-flat .flat { color: #5b6470; font-weight: 600; }
-.total-profit.tp-today { border: 1px dashed var(--line); }
+.total-profit.tp-up { background: #ef4444; }
+.total-profit.tp-up .up { color: #fff; font-weight: 700; }
+.total-profit.tp-down { background: #16a34a; }
+.total-profit.tp-down .down { color: #fff; font-weight: 700; }
+.total-profit.tp-flat { background: #6b7280; }
+.total-profit.tp-flat .flat { color: #fff; font-weight: 700; }
+/* 今日盈亏：在色块外再加一圈白色描边，与「总盈亏」区分但仍清晰 */
+.total-profit.tp-today { box-shadow: 0 0 0 2px rgba(255,255,255,.75); margin-left: 8px; }
 
 /* 隐藏明细：除名称与「已隐藏」标记外，其余信息一律不显示 */
 .is-hidden .li-sub { display: none; }
@@ -126,7 +127,8 @@ body {
 .board-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .bh-right { text-align: right; }
 .board-total { font-size: 16px; font-weight: 700; }
-.board-profit { font-size: 12px; }
+.board-today { font-size: 12px; font-weight: 600; margin-top: 2px; }
+.board-profit { font-size: 12px; margin-top: 2px; }
 .fold-icon { color: var(--muted); font-size: 14px; width: 16px; text-align: center; }
 .board-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
 .chev { margin-left: 4px; color: var(--muted); font-size: 13px; transition: transform .2s ease; }
@@ -322,11 +324,12 @@ body {
 }
 .hold-actions .btn-mini { flex: 1; text-align: center; padding: 8px 4px; }
 /* 每只基金下方的本日/累计盈亏一行 */
-.hd-pline { display: flex; gap: 12px; padding: 8px 12px 10px; background: #fafbfc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; margin-top: -9px; }
-.pl-item { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; }
+/* 盈亏行：纵向排列，当日盈亏 / 累计盈亏 各占一行，避免数字重叠 */
+.hd-pline { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: #fafbfc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; margin-top: -9px; }
+.pl-item { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; flex: 1; min-width: 0; flex-wrap: wrap; }
 .pl-k { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .pl-v { font-size: 14px; font-weight: 600; }
-.pl-p { font-size: 12px; }
+.pl-p { font-size: 12px; margin-left: 6px; }
 .pl-sub { font-size: 12px; color: var(--muted); }
 
 /* 个人中心 */
