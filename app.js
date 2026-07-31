@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-6';
+  const APP_VERSION = '2026-08-01-7';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -1432,6 +1432,8 @@
 
   async function ensureAuthed() {
     const st = await Remote.status();
+    // 后端不可达或明确无配置 → 当本地模式处理，绝不弹口令
+    if (!st || st.setup === undefined) { Remote.setEnabled(false); return; }
     if (!Remote.getToken()) { await showAuth(!st.setup); return; }
     try {
       Remote.setSuppress(true);
@@ -1469,10 +1471,11 @@
     const rBtn = document.getElementById('refresh-btn');
     if (rBtn) rBtn.addEventListener('click', () => refreshAll(true));
 
-    // 自动探测后端：存在则进入「云端多设备」模式，否则保持本地模式
+    // 自动探测后端（可选功能）。仅当「真实后端」存在且用户此前已登录，才进入云端同步模式；
+    // 纯静态托管（GitHub Pages 等）一律保持本地模式，绝不自动弹出口令页（避免被旧版 SW 缓存误导）。
     let remote = false;
     try { remote = await Remote.ping(); } catch (e) { remote = false; }
-    if (remote) {
+    if (remote && Remote.getToken()) {
       Remote.setEnabled(true);
       await ensureAuthed();
     } else {
@@ -1492,7 +1495,17 @@
     if (navigator.serviceWorker && location.protocol.indexOf('http') === 0) {
       try {
         const reg = await navigator.serviceWorker.register('./sw.js');
-        // 发现新版本时立即接管，避免手机一直停留在旧页面
+        // 若已有新版本在「等待」状态，立即让它接管，避免手机停留在旧页面
+        if (reg.waiting) reg.waiting.postMessage('skip-waiting');
+        reg.addEventListener('updatefound', () => {
+          const nw = reg.installing;
+          if (nw) nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+              nw.postMessage('skip-waiting');
+            }
+          });
+        });
+        // 发现新版本时立即检查并接管，避免手机一直停留在旧页面
         if (reg && reg.update) reg.update().catch(() => {});
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           if (!window.__ffaReloaded) { window.__ffaReloaded = true; location.reload(); }
