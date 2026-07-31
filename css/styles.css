@@ -121,11 +121,11 @@ body {
 /* 板块资产明细（现金 / 投资 + 快捷新增） */
 .board-detail { margin-top: 10px; background: #f7f9fc; border-radius: 12px; padding: 4px 6px; }
 .bd-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 10px 8px; border-radius: 8px;
 }
 .bd-row + .bd-row { border-top: 1px solid var(--line); }
-.bd-label { font-size: 14px; font-weight: 500; flex: 1; }
+.bd-label { font-size: 14px; font-weight: 500; flex: 1 0 auto; white-space: nowrap; }
 .bd-val {
   font-size: 15px; font-weight: 700; color: var(--text);
   font-variant-numeric: tabular-nums; margin-right: 4px;
@@ -155,7 +155,9 @@ body {
   display: flex; align-items: center; gap: 10px; padding: 12px 10px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--card);
 }
-.li-title { font-size: 14px; font-weight: 500; }
+.li-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.li-right { flex: 0 0 auto; text-align: right; display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+.li-title { font-size: 15px; font-weight: 600; line-height: 1.35; }
 .li-code { font-size: 11px; color: var(--muted); font-weight: 400; }
 .dca-badge { font-size: 10px; font-weight: 600; color: #fff; background: #10b981; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
 

@@ -821,7 +821,7 @@
   function swipeItem(o) {
     return '' +
       '<div class="swipe-item" data-kind="' + o.kind + '" data-board="' + o.board + '" data-id="' + o.id + '">' +
-      '<div class="swipe-inner"><div class="li">' + o.main + o.right + '</div></div>' +
+      '<div class="swipe-inner"><div class="li"><div class="li-main">' + o.main + '</div><div class="li-right">' + o.right + '</div></div></div>' +
       '<button class="swipe-del" data-action="delete-' + o.kind + '" data-board="' + o.board + '" data-id="' + o.id + '">删除</button>' +
       '</div>';
   }
