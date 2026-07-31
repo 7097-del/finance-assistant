@@ -106,6 +106,9 @@
         '<div class="sheet-footer"><button class="btn-primary block" data-act="submit">' + (opts.submitText || '保存') + '</button></div>' +
         '</div>';
       document.body.appendChild(overlay);
+      // 自动聚焦首个输入/文本域，手机端直接唤起键盘，避免「点开备注却无法输入」
+      const firstField = overlay.querySelector('textarea, input');
+      if (firstField) { try { firstField.focus(); } catch (e) {} }
 
       const collect = () => {
         const values = {};

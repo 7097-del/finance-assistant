@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-31-5';
+  const APP_VERSION = '2026-07-31-6';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -12,6 +12,7 @@
   ];
 
   let currentTab = 'home';
+  let homeView = 'cash';                  // 首页视图：'cash' 现金页(仅收支) / 'hold' 持有(板块总览)
   const foldState = {};                 // 板块折叠状态（内存）
   const subOpen = {};                   // 板块内 现金/投资 子区展开状态（内存）
   const expandedHoldings = new Set();   // 持仓展开详情
@@ -244,10 +245,12 @@
         if (curX < -delW / 2) { inner.style.transform = 'translateX(-' + delW + 'px)'; opened = true; }
         else { inner.style.transform = 'translateX(0)'; opened = false; }
       }
-      item.addEventListener('touchstart', e => start(e.touches[0].clientX), { passive: true });
+      const isInteractive = (t) => !!(t && t.closest && t.closest('button,[data-action],input,textarea,select,a'));
+      item.addEventListener('touchstart', e => { if (isInteractive(e.target)) return; start(e.touches[0].clientX); }, { passive: true });
       item.addEventListener('touchmove', e => move(e.touches[0].clientX), { passive: true });
       item.addEventListener('touchend', end);
       item.addEventListener('mousedown', e => {
+        if (isInteractive(e.target)) return;
         start(e.clientX);
         const mm = ev => move(ev.clientX);
         const mu = () => { end(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
@@ -620,10 +623,13 @@
   function renderHome() {
     const g = Store.globalTotals();
     const ring = buildRing();
-    const boardsHtml = Store.BOARD_DEFS.map(b => renderBoardCard(b.key)).join('');
-    const reminder = renderDcaReminder();
+    const toggle = '' +
+      '<div class="seg-tabs">' +
+      '<button class="seg-tab ' + (homeView === 'cash' ? 'active' : '') + '" data-action="home-view" data-view="cash">💰 现金</button>' +
+      '<button class="seg-tab ' + (homeView === 'hold' ? 'active' : '') + '" data-action="home-view" data-view="hold">📈 持有</button>' +
+      '</div>';
+    const body = homeView === 'cash' ? renderHomeCash() : (renderDcaReminder() + Store.BOARD_DEFS.map(b => renderBoardCard(b.key)).join(''));
     return '' +
-      (reminder ? reminder : '') +
       '<div class="total-card">' +
       '<div class="total-label">总资产（元）</div>' +
       '<div class="total-value">' + UI.fmtMoney(g.grandTotal) + '</div>' +
@@ -631,11 +637,34 @@
       '<div class="ring-wrap">' + ring + '</div>' +
       '</div>' +
       refreshStatusBar() +
-      boardsHtml +
+      toggle +
+      body +
       '<div class="quick-bar">' +
       '<button class="quick-btn" data-action="add-cash"><span class="q-ico">✎</span>记一笔</button>' +
       '<button class="quick-btn" data-action="refresh"><span class="q-ico">↻</span>净值更新</button>' +
       '<button class="quick-btn" data-action="transfer"><span class="q-ico">⇄</span>资产调拨</button>' +
+      '</div>';
+  }
+
+  /* 首页「现金」视图：跨板块、只列收支(支出/收入)，每行可备注/删除 */
+  function cashRowHtml(c) {
+    return swipeItem({
+      kind: 'cash', board: c.boardKey, id: c.id,
+      main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + '</div>' +
+        '<div class="li-sub">' + boardName(c.boardKey) + ' · ' + UI.fmtTime(c.time) + '</div>' +
+        noteLine(c.note) + noteBtn('cash', c.boardKey, c.id, c.note),
+      right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
+    });
+  }
+  function renderHomeCash() {
+    const all = [];
+    Store.BOARD_DEFS.forEach(b => Store.state.boards[b.key].cash.forEach(c => all.push(Object.assign({ boardKey: b.key }, c))));
+    all.sort((a, b) => b.time - a.time);
+    const rows = all.length === 0
+      ? '<div class="empty">还没有现金记录，点击下方「＋ 记一笔现金」</div>'
+      : all.map(cashRowHtml).join('');
+    return '<div class="home-cash">' + rows +
+      '<button class="sub-add block" data-action="add-cash">＋ 记一笔现金</button>' +
       '</div>';
   }
 
@@ -1041,6 +1070,7 @@
       Store.updateSettings({ hideAmount: !Store.state.settings.hideAmount });
       render(); return;
     }
+    if (a === 'home-view') { homeView = el.dataset.view || 'cash'; render(); return; }
     if (a === 'record') { openCashSheet(board); return; }
     if (a === 'edit-note') { openNoteSheet(el.dataset.kind, board, id); return; }
     if (a === 'add-cash-board') { openCashSheet(board); return; }

@@ -234,6 +234,15 @@ body {
 
 .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 18px 0; }
 
+/* 首页 现金/持有 切换条 */
+.seg-tabs { display: flex; gap: 8px; margin: 12px 14px 4px; }
+.seg-tab {
+  flex: 1; padding: 10px 0; font-size: 14px; font-weight: 600; text-align: center;
+  color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+}
+.seg-tab.active { color: #fff; background: var(--brand); border-color: var(--brand); }
+.home-cash { padding: 4px 14px 0; }
+
 /* 快捷操作栏 */
 .quick-bar { display: flex; gap: 10px; margin-top: 16px; }
 .quick-btn {

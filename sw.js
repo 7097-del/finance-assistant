@@ -5,7 +5,7 @@
  * 现在改为：代码文件一律先走网络（拿到就更新缓存），断网时才回落到缓存。
  * 每次发版只需改下面的 VERSION，旧缓存会被自动清空。
  */
-const VERSION = '2026-07-31-5';
+const VERSION = '2026-07-31-6';
 const CACHE = 'ffa-' + VERSION;
 const SHELL = [
   './',
