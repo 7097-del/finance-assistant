@@ -84,6 +84,7 @@
     };
     b.cash.unshift(rec);
     save();
+    return rec;
   }
   function updateCash(boardKey, id, patch) {
     const b = state.boards[boardKey]; if (!b) return;
@@ -112,7 +113,7 @@
       avgCost: Math.max(0, Number(h.avgCost) || 0),
       lastNav: 0, prevNav: 0, todayChangePct: 0,
       marketValue: 0, todayProfit: 0, totalProfit: 0,
-      navHistory: [],
+      navHistory: [], note: (h.note || '').toString().slice(0, 200),
     };
     b.invest.push(rec);
     save();
@@ -122,6 +123,7 @@
     const b = state.boards[boardKey]; if (!b) return;
     const h = b.invest.find(x => x.id === id); if (!h) return;
     Object.assign(h, patch);
+    if (patch.note !== undefined) h.note = patch.note.toString().slice(0, 200);
     save();
   }
   function deleteHolding(boardKey, id) {

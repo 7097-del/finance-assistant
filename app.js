@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-31-4';
+  const APP_VERSION = '2026-07-31-5';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -706,8 +706,9 @@
     const folded = foldState[boardKey];
     const cashHtml = cash.length === 0 ? '' : cash.map(c => swipeItem({
       kind: 'cash', board: boardKey, id: c.id,
-      main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + (c.note ? ' · ' + escapeHtml(c.note) : '') + '</div>' +
-        '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>',
+      main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + '</div>' +
+        '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>' +
+        noteLine(c.note) + noteBtn('cash', c.boardKey, c.id, c.note),
       right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
     })).join('');
     const investHtml = invest.length === 0 ? '' : invest.map(h => {
@@ -833,6 +834,14 @@
         '<span class="pl-v ' + UI.changeClass(tot) + '">' + UI.fmtMoney(tot) + '</span></div>' +
       '</div>';
   }
+  /* 备注按钮 + 备注展示（现金/投资通用，UI 简洁不冗余） */
+  function noteBtn(kind, board, id, hasNote) {
+    return '<button class="li-note-btn" data-action="edit-note" data-kind="' + kind + '" data-board="' + board + '" data-id="' + id + '">' +
+      (hasNote ? '✎ 备注' : '＋备注') + '</button>';
+  }
+  function noteLine(note) {
+    return note ? '<div class="li-note">📝 ' + escapeHtml(note) + '</div>' : '';
+  }
 
   function renderHoldingRow(h) {
     const expanded = expandedHoldings.has(h.id);
@@ -871,6 +880,7 @@
       '<div class="hold-main">' +
       '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
       '<div class="li-sub">' + h.boardName + ' · ' + (isGold ? '克数 ' : '份额 ') + UI.fmtNum(h.shares, isGold ? 3 : undefined) + '</div>' +
+      noteLine(h.note) + noteBtn('invest', h.boardKey, h.id, h.note) +
       '</div>' +
       '<div class="hold-right">' +
       '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
@@ -901,8 +911,9 @@
       ? '<div class="empty">暂无收支记录</div>'
       : items.map(c => swipeItem({
         kind: 'cash', board: c.boardKey, id: c.id,
-        main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + ' · ' + c.boardName + (c.note ? ' · ' + escapeHtml(c.note) : '') + '</div>' +
-          '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>',
+        main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + ' · ' + c.boardName + '</div>' +
+          '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>' +
+          noteLine(c.note) + noteBtn('cash', c.boardKey, c.id, c.note),
         right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
       })).join('');
     return '' +
@@ -999,6 +1010,26 @@
     document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === currentTab));
   }
 
+  /* 备注弹窗：现金/投资通用，单文本框，保存即写回 */
+  function openNoteSheet(kind, board, id) {
+    const isCash = kind === 'cash';
+    const b = Store.state.boards[board];
+    if (!b) return;
+    const item = isCash ? b.cash.find(x => x.id === id) : b.invest.find(x => x.id === id);
+    if (!item) return;
+    UI.sheet({
+      title: isCash ? '现金备注' : '投资备注',
+      submitText: '保存',
+      fields: [{ key: 'note', label: '备注', type: 'textarea', value: item.note || '', placeholder: '例如：这笔是年终奖 / 长期持有不动' }],
+      onSubmit: (v) => {
+        const note = (v.note || '').trim();
+        if (isCash) Store.updateCash(board, id, { note: note });
+        else Store.updateHolding(board, id, { note: note });
+        render();
+      },
+    });
+  }
+
   /* ---------------- 事件委托 ---------------- */
   function onClick(e) {
     const el = e.target.closest('[data-action]');
@@ -1011,6 +1042,7 @@
       render(); return;
     }
     if (a === 'record') { openCashSheet(board); return; }
+    if (a === 'edit-note') { openNoteSheet(el.dataset.kind, board, id); return; }
     if (a === 'add-cash-board') { openCashSheet(board); return; }
     if (a === 'add-invest-board') { openHoldingSheet(board, null); return; }
     if (a === 'sell-invest-board') { openSellBoard(board); return; }
