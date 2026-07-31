@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-4';
+  const APP_VERSION = '2026-08-01-5';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -144,6 +144,32 @@
     const d = new Date(ts);
     const p = n => String(n).padStart(2, '0');
     return (d.getMonth() + 1) + '/' + p(d.getDate());
+  }
+  /* 完整日期 YYYY-MM-DD（定投「上期定投时间」用，含年份便于核对哪一期） */
+  function fmtFullDate(ts) {
+    if (!ts) return '从未';
+    const d = new Date(ts);
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  /* 该次执行属于哪一期（用于「上期定投时间」后标注是哪一期，解决「不知道执行了哪一期」） */
+  function periodDesc(plan, ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (plan.freq === 'weekly') {
+      const onejan = new Date(d.getFullYear(), 0, 1);
+      const wk = Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+      return d.getFullYear() + '第' + wk + '周';
+    }
+    if (plan.freq === 'weekday') {
+      const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日·周' + wd;
+    }
+    if (plan.freq === 'interval') {
+      return '每' + (Number(plan.param) || 1) + '天';
+    }
+    // monthly
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
   }
   /* 定投计划状态：done=本期已执行 / due=已到期待处理 / pending=未到待执行
    * lastExec 取 自动扣款时间 与 手动记一笔标记 的较大者（两者都算「本期已执行」） */
@@ -921,11 +947,12 @@
     const summary = '<div class="dca-r-head">📊 定投状态：已执行 <b>' + done + '/' + plans.length + '</b> · 待记 ' + due + ' · 待执行 ' + pending + '</div>';
     // 仅「到期待处理 且 未开启自动」的计划需要手动记一笔
     const actionable = infos.filter(x => x.i.state === 'due' && !x.i.auto);
-    const items = actionable.map(({ p }) =>
+    const items = actionable.map(({ p, i }) =>
       '<div class="dca-item">' +
       '<div class="dca-i-main">' +
       '<div class="dca-i-name">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
       '<div class="dca-i-sub">' + boardName(p.board) + ' · 应投 ' + planAmountLabel(p).replace('每期 ', '') + '</div>' +
+      '<div class="dca-i-sub">上期定投 ' + fmtFullDate(i.lastExec) + '</div>' +
       '</div>' +
       '<button class="dca-rec-btn" data-action="dca-record" data-plan="' + p.id + '">记一笔</button>' +
       '</div>').join('');
@@ -1043,7 +1070,9 @@
           '<div class="dca-p-main">' +
           '<div class="li-title">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span> ' + pill + ' ' + autoTag + '</div>' +
           '<div class="li-sub">' + freqLabel(p) + ' · ' + planAmountLabel(p) + '</div>' +
-          '<div class="li-sub2">上次 ' + fmtYMD(i.lastExec) + ' · 下次 ' + fmtYMD(i.nextDue) + '</div>' +
+          '<div class="li-sub2">上期定投 ' + fmtFullDate(i.lastExec) +
+            (i.lastExec ? '（' + periodDesc(p, i.lastExec) + '）' : '') +
+            ' · 下期扣款 ' + fmtFullDate(i.nextDue) + '</div>' +
           '</div>' +
           '<button class="btn-mini danger" data-action="delete-dca" data-id="' + p.id + '">删除</button>' +
           '</div>';
