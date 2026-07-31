@@ -97,3 +97,43 @@
 
   window.FundAPI = { isTradingTime, getBatch, getEstimate, _jsonp: jsonp, _normalize: normalize };
 })();
+
+/* GoldAPI —— 实体黄金（如意金）参考价
+ * 数据源（2026-07 实测可用、CORS 开放 *、无需 key）：
+ *   金价：https://api.gold-api.com/price/XAU  → 返回 XAU 美元/盎司
+ *   汇率：https://open.er-api.com/v6/latest/USD → 返回 rates.CNY
+ * 换算：如意金参考价(元/克) = XAU美元/盎司 ÷ 31.1034768 × 美元兑人民币
+ */
+(function () {
+  'use strict';
+  const XAU_URL = 'https://api.gold-api.com/price/XAU';
+  const FX_URL = 'https://open.er-api.com/v6/latest/USD';
+  const GRAMS_PER_OZ = 31.1034768;
+  const FALLBACK_USD_CNY = 7.2;
+
+  function fetchJson(url, timeoutMs) {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = setTimeout(() => { if (ctrl) ctrl.abort(); }, timeoutMs || 10000);
+    return fetch(url, ctrl ? { signal: ctrl.signal } : {})
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .finally(() => clearTimeout(timer));
+  }
+
+  /* 返回 { price: 元/克, usdPerOz, usdCny, updatedAt } */
+  async function getPrice() {
+    const [xau, fx] = await Promise.all([
+      fetchJson(XAU_URL, 10000),
+      fetchJson(FX_URL, 10000),
+    ]);
+    const usdCny = (fx && fx.rates && fx.rates.CNY) ? Number(fx.rates.CNY) : FALLBACK_USD_CNY;
+    const perGram = (Number(xau.price) || 0) / GRAMS_PER_OZ * usdCny;
+    return {
+      price: perGram,
+      usdPerOz: Number(xau.price) || 0,
+      usdCny: usdCny,
+      updatedAt: xau.updatedAt || '',
+    };
+  }
+
+  window.GoldAPI = { getPrice, _fetchJson: fetchJson, GRAMS_PER_OZ };
+})();

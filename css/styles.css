@@ -160,6 +160,7 @@ body {
 .li-title { font-size: 15px; font-weight: 600; line-height: 1.35; }
 .li-code { font-size: 11px; color: var(--muted); font-weight: 400; }
 .dca-badge { font-size: 10px; font-weight: 600; color: #fff; background: #10b981; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
+.gold-badge { font-size: 10px; font-weight: 600; color: #fff; background: #d4a017; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
 
 /* 定投提醒横幅 */
 .dca-reminder { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 12px; padding: 12px; margin-bottom: 14px; }

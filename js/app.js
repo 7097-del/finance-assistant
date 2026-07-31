@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-30-3';
+  const APP_VERSION = '2026-07-31-1';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -112,8 +112,10 @@
     if (showToast) UI.toast('正在获取最新净值…');
 
     const trading = FundAPI.isTradingTime();
+    const fundHoldings = holdings.filter(h => h.kind !== 'gold');
+    const goldHoldings = holdings.filter(h => h.kind === 'gold');
     const codes = [];
-    holdings.forEach(h => { if (h.code && codes.indexOf(h.code) === -1) codes.push(h.code); });
+    fundHoldings.forEach(h => { if (h.code && /^\d{6}$/.test(h.code) && codes.indexOf(h.code) === -1) codes.push(h.code); });
 
     let map = {}, netError = null;
     try {
@@ -127,7 +129,7 @@
     let ok = 0, fail = 0;
     let navDate = '';
     if (!netError) {
-      for (const h of holdings) {
+      for (const h of fundHoldings) {
         const d = map[h.code];
         if (!d || !d.nav) { fail++; continue; }
         // 交易时段且有盘中估值 → 用估值；否则用官方已公布净值
@@ -148,6 +150,39 @@
         });
         if (!navDate) navDate = d.navDate || '';
         ok++;
+      }
+      // 实体黄金：统一拉一次金价，刷新所有黄金持仓市值
+      if (goldHoldings.length) {
+        let gp = null, gerr = null;
+        try {
+          gp = await Promise.race([
+            GoldAPI.getPrice(),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('金价获取超时')), 20000)),
+          ]);
+        } catch (e) { gerr = e; }
+        if (gp && gp.price > 0) {
+          for (const h of goldHoldings) {
+            const prev = h.lastNav || 0;
+            const price = gp.price;
+            const chg = prev > 0 ? (price - prev) / prev * 100 : 0;
+            Store.updateHolding(h.boardKey, h.id, {
+              name: h.name || '如意金(实体黄金)',
+              lastNav: price,
+              prevNav: prev,
+              navDate: '',
+              todayChangePct: chg,
+              marketValue: h.shares * price,
+              todayProfit: (price - prev) * h.shares,
+              totalProfit: (price - h.avgCost) * h.shares,
+              navHistory: pushNav(h.navHistory, { t: Date.now(), nav: price }),
+            });
+            if (!navDate) navDate = '金价 ' + (gp.updatedAt ? String(gp.updatedAt).slice(0, 10) : '');
+            ok++;
+          }
+        } else {
+          goldHoldings.forEach(() => fail++);
+          if (goldHoldings.length && ok === 0 && !netError && gerr) netError = gerr;
+        }
       }
       const g = Store.globalTotals();
       Store.addSnapshot({
@@ -255,7 +290,7 @@
           key: 'mode', label: '录入方式', type: 'segmented', value: 'shares',
           options: [{ value: 'shares', label: '按份额' }, { value: 'amount', label: '按总金额' }],
         },
-        { key: 'avgCost', label: '平均成本（元/份）', type: 'number', value: initCost || '', placeholder: '0.0000' },
+        { key: 'avgCost', label: '平均成本（元/份）', type: 'number', value: initCost || '', placeholder: '0.000' },
         { key: 'shares', label: '持仓份额', type: 'number', value: initShares || '', placeholder: '0.00' },
         { key: 'amount', label: '总金额（元）', type: 'number', value: initAmount ? initAmount.toFixed(2) : '', placeholder: '0.00' },
       ],
@@ -290,6 +325,63 @@
         }
         if (shares <= 0) throw new Error('请输入有效份额');
         const patch = { code: v.code.trim(), name: (v.name || '').trim() || '未命名基金', shares: shares, avgCost: cost };
+        if (edit) Store.updateHolding(h.boardKey, h.id, patch);
+        else Store.addHolding(v.board, patch);
+      },
+    }).then(() => render());
+  }
+
+  /* 实体黄金（如意金）录入：克数 + 买入均价(元/克)，金价刷新自动获取 */
+  function openGoldSheet(presetBoard, edit) {
+    const h = edit || {};
+    const initGrams = Number(h.shares) || 0;
+    const initCostG = Number(h.avgCost) || 0;
+    const initAmount = initGrams > 0 && initCostG > 0 ? (initGrams * initCostG) : 0;
+    UI.sheet({
+      title: edit ? '编辑实体黄金' : '新增实体黄金（如意金）',
+      fields: [
+        { key: 'board', label: '归属板块', type: 'select', value: presetBoard || h.boardKey || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
+        { key: 'name', label: '名称', type: 'text', value: h.name && h.name !== '如意金(实体黄金)' ? h.name : '', placeholder: '如 如意金积存' },
+        {
+          key: 'mode', label: '录入方式', type: 'segmented', value: 'shares',
+          options: [{ value: 'shares', label: '按克数' }, { value: 'amount', label: '按金额' }],
+        },
+        { key: 'avgCost', label: '买入均价（元/克）', type: 'number', value: initCostG || '', placeholder: '0.000' },
+        { key: 'shares', label: '持有克数', type: 'number', value: initGrams || '', placeholder: '0.000' },
+        { key: 'amount', label: '总金额（元）', type: 'number', value: initAmount ? initAmount.toFixed(2) : '', placeholder: '0.00' },
+        { key: 'note', label: '说明', type: 'note', value: '如意金价格点「刷新净值」自动获取（国际金价换算，单位 元/克）' },
+      ],
+      onInput: (v, api) => {
+        const cost = Number(v.avgCost) || 0;
+        if (v.mode === 'amount') {
+          api.readonly('shares', true); api.readonly('amount', false);
+          const amt = Number(v.amount) || 0;
+          const sh = cost > 0 ? amt / cost : 0;
+          api.set('shares', sh > 0 ? sh.toFixed(3) : '');
+          api.hint('shares', cost > 0 ? '由总金额 ÷ 均价自动算出' : '请先填写买入均价');
+          api.hint('amount', '');
+        } else {
+          api.readonly('shares', false); api.readonly('amount', true);
+          const sh = Number(v.shares) || 0;
+          const amt = sh * cost;
+          api.set('amount', amt > 0 ? amt.toFixed(2) : '');
+          api.hint('amount', cost > 0 ? '由克数 × 均价自动算出' : '请先填写买入均价');
+          api.hint('shares', '');
+        }
+      },
+      submitText: '保存',
+      onSubmit: (v) => {
+        const cost = Number(v.avgCost) || 0;
+        let grams = Number(v.shares) || 0;
+        if (v.mode === 'amount') {
+          const amt = Number(v.amount) || 0;
+          if (amt <= 0) throw new Error('请输入有效总金额');
+          if (cost <= 0) throw new Error('按金额录入时必须填写买入均价');
+          grams = amt / cost;
+        }
+        if (grams <= 0) throw new Error('请输入有效克数');
+        const name = (v.name || '').trim() || '如意金(实体黄金)';
+        const patch = { kind: 'gold', code: 'RUYI', name: name, shares: grams, avgCost: cost };
         if (edit) Store.updateHolding(h.boardKey, h.id, patch);
         else Store.addHolding(v.board, patch);
       },
@@ -614,13 +706,19 @@
         '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>',
       right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
     })).join('');
-    const investHtml = invest.length === 0 ? '' : invest.map(h => swipeItem({
-      kind: 'invest', board: boardKey, id: h.id,
-      main: '<div class="li-title">' + escapeHtml(h.name) + ' <span class="li-code">' + h.code + '</span></div>' +
-        '<div class="li-sub">份额 ' + UI.fmtNum(h.shares) + ' · 成本 ' + UI.fmtNum(h.avgCost) + '</div>',
-      right: '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
-        '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>',
-    })).join('');
+    const investHtml = invest.length === 0 ? '' : invest.map(h => {
+      const isGold = h.kind === 'gold';
+      const sub = isGold
+        ? '克数 ' + UI.fmtNum(h.shares, 3) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3) + ' 元/克'
+        : '份额 ' + UI.fmtNum(h.shares) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3);
+      return swipeItem({
+        kind: 'invest', board: boardKey, id: h.id,
+        main: '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + '</div>' +
+          '<div class="li-sub">' + sub + '</div>',
+        right: '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
+          '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>',
+      });
+    }).join('');
     const empty = (cash.length === 0 && invest.length === 0) ? '<div class="empty">暂无记录，点击下方明细「+」添加</div>' : '';
     const detailHtml = '' +
       '<div class="board-detail">' +
@@ -634,6 +732,7 @@
       '<span class="bd-val">' + UI.fmtMoney(investTotal) + '</span>' +
       '<button class="bd-sell" data-action="dca-plan-board" data-board="' + boardKey + '" title="设置定投计划">定投</button>' +
       '<button class="bd-sell" data-action="sell-invest-board" data-board="' + boardKey + '" title="卖出基金持仓">卖出</button>' +
+      '<button class="bd-add" data-action="add-gold-board" data-board="' + boardKey + '" title="新增实体黄金（如意金）">金</button>' +
       '<button class="bd-add" data-action="add-invest-board" data-board="' + boardKey + '" title="新增基金持仓">＋</button>' +
       '</div>' +
       '</div>';
@@ -683,7 +782,7 @@
       '<select class="f-select" data-filter="board">' + '<option value="all">全部板块</option>' + boardSelectOptions(investFilter.board) + '</select>' +
       '<input class="f-input" data-filter="kw" placeholder="搜索代码/名称" value="' + (investFilter.kw || '') + '">' +
       '</div>' +
-      '<div class="section-head"><span>全部持仓（' + holdings.length + '）</span><button class="btn-mini primary" data-action="add-holding">+ 添加持仓</button></div>' +
+      '<div class="section-head"><span>全部持仓（' + holdings.length + '）</span><button class="btn-mini" data-action="add-gold">+ 实体黄金</button><button class="btn-mini primary" data-action="add-holding">+ 添加持仓</button></div>' +
       listHtml +
       '<div class="section-head"><span>交易记录（' + trades.length + '）</span><button class="btn-mini" data-action="snapshot-history">刷新历史</button></div>' +
       tradeHtml;
@@ -691,6 +790,7 @@
 
   function renderHoldingRow(h) {
     const expanded = expandedHoldings.has(h.id);
+    const isGold = h.kind === 'gold';
     const plan = findPlan(h.boardKey, h.code);
     const isDca = !!plan || Store.state.trades.some(t => t.code === h.code && t.board === h.boardKey && t.dca);
     const w = periodReturn(h.navHistory, 7);
@@ -705,8 +805,8 @@
     const detail = expanded ? '' +
       '<div class="hold-detail">' +
       '<div class="hd-grid">' +
-      '<div><span class="muted">最新净值</span>' + UI.fmtNum(h.lastNav, 4) + (h.navDate ? '<span class="muted">' + h.navDate + '</span>' : '') + '</div>' +
-      '<div><span class="muted">平均成本</span>' + UI.fmtNum(h.avgCost, 4) + '</div>' +
+      '<div><span class="muted">' + (isGold ? '如意金价(元/克)' : '最新净值') + '</span>' + UI.fmtNum(h.lastNav, isGold ? 3 : 4) + (isGold ? '' : (h.navDate ? '<span class="muted">' + h.navDate + '</span>' : '')) + '</div>' +
+      '<div><span class="muted">平均成本</span>' + UI.fmtNum(h.avgCost, 3) + '</div>' +
       '<div><span class="muted">持仓份额</span>' + UI.fmtNum(h.shares) + '</div>' +
       '<div><span class="muted">投入本金</span>' + UI.fmtMoney(h.shares * h.avgCost) + '</div>' +
       '<div><span class="muted">当前市值</span>' + UI.fmtMoney(h.marketValue) + '</div>' +
@@ -723,8 +823,8 @@
     return '' +
       '<div class="hold-row" data-action="expand" data-id="' + h.id + '">' +
       '<div class="hold-main">' +
-      '<div class="li-title">' + escapeHtml(h.name) + ' <span class="li-code">' + h.code + '</span>' + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
-      '<div class="li-sub">' + h.boardName + ' · 份额 ' + UI.fmtNum(h.shares) + '</div>' +
+      '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
+      '<div class="li-sub">' + h.boardName + ' · ' + (isGold ? '克数 ' : '份额 ') + UI.fmtNum(h.shares, isGold ? 3 : undefined) + '</div>' +
       '</div>' +
       '<div class="hold-right">' +
       '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
@@ -733,12 +833,17 @@
       '</div>' +
       (expanded ? '<span class="expand-ico">▴</span>' : '<span class="expand-ico">▾</span>') +
       '</div>' +
-      '<div class="hold-actions">' +
-      '<button class="btn-mini act-buy" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
-      '<button class="btn-mini act-sell" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
-      '<button class="btn-mini dca-btn" data-action="dca-plan" data-board="' + h.boardKey + '" data-id="' + h.id + '">' +
-      (plan ? '定投计划 ·<span class="dca-btn-sub"> ' + freqLabel(plan) + '</span>' : '＋ 定投计划') + '</button>' +
-      '</div>' + detail;
+      (isGold
+        ? '<div class="hold-actions">' +
+          '<button class="btn-mini" data-action="edit-holding" data-board="' + h.boardKey + '" data-id="' + h.id + '">编辑</button>' +
+          '<button class="btn-mini danger" data-action="delete-invest" data-board="' + h.boardKey + '" data-id="' + h.id + '">删除</button>' +
+          '</div>'
+        : '<div class="hold-actions">' +
+          '<button class="btn-mini act-buy" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
+          '<button class="btn-mini act-sell" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
+          '<button class="btn-mini dca-btn" data-action="dca-plan" data-board="' + h.boardKey + '" data-id="' + h.id + '">' +
+          (plan ? '定投计划 ·<span class="dca-btn-sub"> ' + freqLabel(plan) + '</span>' : '＋ 定投计划') + '</button>' +
+          '</div>') + detail;
   }
 
   /* ---------------- 渲染：收支明细 ---------------- */
@@ -867,7 +972,14 @@
     if (a === 'transfer') { openTransferSheet(); return; }
     if (a === 'toggle-fold') { foldState[board] = !foldState[board]; render(); return; }
     if (a === 'add-holding') { openHoldingSheet(null, null); return; }
-    if (a === 'edit-holding') { const h = Store.state.boards[board].invest.find(x => x.id === id); openHoldingSheet(board, h); return; }
+    if (a === 'add-gold') { openGoldSheet(null, null); return; }
+    if (a === 'add-gold-board') { openGoldSheet(board, null); return; }
+    if (a === 'edit-holding') {
+      const h = Store.state.boards[board].invest.find(x => x.id === id);
+      if (h && h.kind === 'gold') openGoldSheet(board, h);
+      else openHoldingSheet(board, h);
+      return;
+    }
     if (a === 'delete-invest') {
       UI.confirm({ title: '删除持仓', message: '确认删除该持仓？删除后相关交易记录仍保留。', okText: '删除' }).then(ok => {
         if (ok) { Store.deleteHolding(board, id); expandedHoldings.delete(id); render(); }
