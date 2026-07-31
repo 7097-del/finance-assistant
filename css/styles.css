@@ -91,6 +91,13 @@ body {
 .total-profit.tp-down .down { color: #1e8a5b; font-weight: 700; }
 .total-profit.tp-flat { background: rgba(255,255,255,.85); }
 .total-profit.tp-flat .flat { color: #5b6470; font-weight: 600; }
+.total-profit.tp-today { border: 1px dashed var(--line); }
+
+/* 隐藏明细：除名称与「已隐藏」标记外，其余信息一律不显示 */
+.is-hidden .li-sub { display: none; }
+.is-hidden .li-code,
+.is-hidden .dca-badge,
+.is-hidden .gold-badge { display: none; }
 
 /* 环形图 */
 .ring-wrap { margin-top: 14px; }
@@ -112,7 +119,7 @@ body {
 /* 板块卡片 */
 .board-card { background: var(--card); border-radius: 14px; margin-top: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .board-head {
-  display: flex; align-items: center; gap: 10px; padding: 14px 14px;
+  display: flex; align-items: center; gap: 10px; padding: 14px 14px; cursor: pointer;
 }
 .bh-left { flex: 1; }
 .board-name { font-size: 15px; font-weight: 600; }
@@ -122,6 +129,12 @@ body {
 .board-profit { font-size: 12px; }
 .fold-icon { color: var(--muted); font-size: 14px; width: 16px; text-align: center; }
 .board-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.chev { margin-left: 4px; color: var(--muted); font-size: 13px; transition: transform .2s ease; }
+.board-card.is-collapsed .chev { transform: rotate(-90deg); }
+.board-collapsed { padding: 12px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+.item-collapse { margin-top: 8px; display: flex; justify-content: center; }
+.btn-collapse { width: 100%; padding: 8px; border: 1px solid var(--line); background: #f5f7fa; border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.btn-collapse:active { background: #eef1f5; }
 .record-btn {
   width: 100%; margin-top: 10px; padding: 10px; border-radius: 10px;
   border: 1px dashed var(--brand); background: #eaf2ff; color: var(--brand-d);
@@ -322,6 +335,7 @@ body {
 .pc-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-top: 1px solid var(--line); font-size: 14px; }
 .pc-row.clickable { cursor: pointer; }
 .pc-row.danger { color: #e34d59; }
+.pc-hint { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
 .about { text-align: center; color: var(--muted); font-size: 12px; margin: 18px 0 8px; line-height: 1.7; }
 
 /* 登录 / 设置口令遮罩 */

@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-1';
+  const APP_VERSION = '2026-08-01-2';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -13,6 +13,7 @@
 
   let currentTab = 'home';
   const expandedItems = new Set();      // 已展开的明细行 id（现金/投资通用，点击才显示操作）
+  const collapsedBoards = new Set();    // 已折叠的板块 key（折叠后隐藏该板块全部明细行，便于快速滑过）
   let refreshing = false;
   const investFilter = { board: 'all', kw: '' };
   const ledgerFilter = { board: 'all' };
@@ -57,6 +58,12 @@
       const n = Math.max(1, Number(plan.param) || 1);
       return fromTs + n * 86400000;
     }
+    if (plan.freq === 'weekday') {
+      // 每个工作日（周一~周五），取严格晚于 from 的下一个工作日
+      const d = new Date(from); d.setHours(0, 0, 0, 0);
+      do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+      return d.getTime();
+    }
     // monthly
     const day = Math.min(Math.max(1, Number(plan.param) || 1), 28);
     const y = from.getFullYear(), m = from.getMonth();
@@ -70,9 +77,63 @@
     const last = (Store.state.dcaDone && Store.state.dcaDone[plan.id]) || 0;
     return Date.now() >= nextDue(plan, last || 0);
   }
+  /* 自动定投：周期分桶 key，用来判断「本期是否已执行」 */
+  function periodKey(plan, ts) {
+    const d = new Date(ts);
+    if (plan.freq === 'monthly') return d.getFullYear() + '-M' + d.getMonth();
+    if (plan.freq === 'weekly') {
+      const onejan = new Date(d.getFullYear(), 0, 1);
+      const wk = Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+      return d.getFullYear() + '-W' + wk;
+    }
+    if (plan.freq === 'weekday') return d.getFullYear() + '-M' + d.getMonth() + '-D' + d.getDate();
+    if (plan.freq === 'interval') return 'I' + Math.floor(ts / (Math.max(1, Number(plan.param) || 1) * 86400000));
+    return 'x';
+  }
+  /* 该计划此刻是否「应该自动执行」（已到扣款日 + 本期尚未执行） */
+  function autoEligible(plan, now) {
+    const d = new Date(now);
+    const dw = d.getDay();
+    if (plan.freq === 'monthly') { if (d.getDate() < Math.min(28, Math.max(1, Number(plan.param) || 1))) return false; }
+    else if (plan.freq === 'weekly') { if (dw !== ((Number(plan.param) || 1) % 7)) return false; }
+    else if (plan.freq === 'weekday') { if (dw === 0 || dw === 6) return false; }
+    const key = periodKey(plan, now);
+    const lastAuto = (plan.lastAuto || 0);
+    const lastManual = (Store.state.dcaDone && Store.state.dcaDone[plan.id]) || 0;
+    const done = periodKey(plan, lastAuto) === key || periodKey(plan, lastManual) === key;
+    return !done;
+  }
+  /* 自动定投：进入首页时扫描所有启用计划，到期者自动从「扣款来源板块」现金扣款买入 */
+  function autoDcaCheck() {
+    if (!Store.state.settings.autoDca) return;
+    const now = Date.now();
+    const plans = (Store.state.dcaPlans || []).filter(p => p.enabled !== false);
+    let executed = 0, totalAmt = 0;
+    for (const plan of plans) {
+      if (!autoEligible(plan, now)) continue;
+      const board = Store.state.boards[plan.board];
+      if (!board) continue;
+      const h = board.invest.find(x => x.code === plan.code);
+      if (!h) continue; // 没有对应持仓则跳过，避免凭空建仓
+      const price = (h.lastNav > 0 ? h.lastNav : (Number(plan.price) || 0));
+      if (price <= 0) continue; // 无可用净值则留作「待记」，不自动执行
+      let shares, cashAmt;
+      if (plan.mode === 'shares' && plan.shares > 0) { shares = plan.shares; cashAmt = shares * price; }
+      else { const amt = Number(plan.amount) || 0; if (amt <= 0) continue; shares = amt / price; cashAmt = amt; }
+      const fromBoard = plan.fromBoard || plan.board;
+      const note = (plan.note ? plan.note + ' · ' : '') + '自动定投';
+      Store.addTrade({ board: plan.board, code: plan.code, action: 'buy', shares: shares, price: price, note: note, dca: true, planId: plan.id, time: now });
+      Store.addCash(fromBoard, { type: 'expense', amount: cashAmt, note: '自动定投 ' + (plan.name || plan.code) + ' (' + plan.code + ')', time: now });
+      Store.state.dcaDone[plan.id] = now; // 标记该计划本期已完成（按 planId，避免同基金多计划互相干扰）
+      Store.updateDcaPlan(plan.id, { lastAuto: now });
+      executed++; totalAmt += cashAmt;
+    }
+    if (executed > 0) { UI.toast('已自动执行 ' + executed + ' 笔定投，扣款 ' + UI.fmtMoney(totalAmt)); render(); }
+  }
   function freqLabel(plan) {
     if (plan.freq === 'weekly') return '每周' + ['日', '一', '二', '三', '四', '五', '六'][((Number(plan.param) || 1) % 7)];
     if (plan.freq === 'interval') return '每' + (Number(plan.param) || 1) + '天';
+    if (plan.freq === 'weekday') return '每个工作日';
     return '每月' + (Number(plan.param) || 1) + '号';
   }
   function boardName(key) { const d = Store.BOARD_DEFS.find(b => b.key === key); return d ? d.name : key; }
@@ -450,6 +511,7 @@
           board: v.board, code: v.code.trim(), action: v.action,
           shares: shares, price: price, note: v.note,
           dca: v.action === 'buy' && v.dca === 'yes',
+          planId: preset.planId || undefined,
         });
       },
     }).then(() => render());
@@ -520,6 +582,7 @@
   function paramHint(freq) {
     if (freq === 'weekly') return '每周几（1=周一 … 7=周日）';
     if (freq === 'interval') return '间隔天数，如 14 表示每两周';
+    if (freq === 'weekday') return '工作日即周一至周五，无需填写扣款日';
     return '每月几号（1-28）';
   }
 
@@ -535,8 +598,9 @@
         { key: 'board', label: '归属板块', type: 'select', value: p.board || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
         { key: 'code', label: '6位基金代码', type: 'text', value: p.code || '', placeholder: '如 110011' },
         { key: 'name', label: '基金名称', type: 'text', value: (p.name && p.name !== '未命名基金') ? p.name : '', placeholder: '可选，刷新时自动获取' },
-        { key: 'freq', label: '定投频率', type: 'select', value: freq, options: [{ value: 'monthly', label: '每月固定日' }, { value: 'weekly', label: '每周固定日' }, { value: 'interval', label: '每隔 N 天' }] },
+        { key: 'freq', label: '定投频率', type: 'select', value: freq, options: [{ value: 'monthly', label: '每月固定日' }, { value: 'weekly', label: '每周固定日' }, { value: 'interval', label: '每隔 N 天' }, { value: 'weekday', label: '每个工作日' }] },
         { key: 'param', label: '扣款日', type: 'number', value: param, placeholder: paramHint(freq), hint: paramHint(freq) },
+        { key: 'fromBoard', label: '扣款来源板块', type: 'select', value: p.fromBoard || p.board || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
         {
           key: 'mode', label: '定投方式', type: 'segmented', value: mode,
           options: [{ value: 'amount', label: '按金额' }, { value: 'shares', label: '按份额' }],
@@ -545,7 +609,7 @@
         { key: 'shares', label: '每期份额', type: 'number', value: p.shares || '', placeholder: '如 500' },
         { key: 'price', label: '参考成交净值', type: 'number', value: p.price || '', placeholder: '可选，记账时可改' },
         { key: 'note', label: '备注', type: 'text', value: p.note || '', placeholder: '可选' },
-        { key: 'tip', label: '', type: 'note', value: '到扣款日后打开 App，首页会弹出提醒，点「记一笔」即可一键入账。' },
+        { key: 'tip', label: '', type: 'note', value: '开启「定投自动执行」后，到扣款日 App 会自动从「扣款来源板块」扣现金并买入该基金，无需手动记一笔；也可保留手动：首页点「记一笔」一键入账。' },
       ],
       onInput: (v, api) => {
         api.hint('param', paramHint(v.freq));
@@ -567,12 +631,14 @@
         if (v.freq === 'monthly') param = Math.min(28, Math.max(1, param));
         if (v.freq === 'weekly') param = Math.min(7, Math.max(1, param));
         if (v.freq === 'interval') param = Math.max(1, param);
+        if (v.freq === 'weekday') param = param || 1;
         const plan = {
           board: v.board,
           code: v.code.trim(),
           name: (v.name || '').trim(),
           freq: v.freq,
           param: param,
+          fromBoard: v.fromBoard || v.board,
           mode: byAmount ? 'amount' : 'shares',
           amount: byAmount ? amount : 0,
           shares: byAmount ? 0 : shares,
@@ -628,6 +694,7 @@
       '<div class="total-label">总资产（元）</div>' +
       '<div class="total-value">' + UI.fmtMoney(g.grandTotal) + '</div>' +
       '<div class="total-profit ' + (g.totalProfit > 0 ? 'tp-up' : (g.totalProfit < 0 ? 'tp-down' : 'tp-flat')) + '">总盈亏 <span class="' + UI.changeClass(g.totalProfit) + '">' + UI.fmtMoney(g.totalProfit) + '</span></div>' +
+      '<div class="total-profit tp-today ' + (g.todayProfit > 0 ? 'tp-up' : (g.todayProfit < 0 ? 'tp-down' : 'tp-flat')) + '">今日盈亏 <span class="' + UI.changeClass(g.todayProfit) + '">' + UI.fmtMoney(g.todayProfit) + '</span></div>' +
       '<div class="ring-wrap">' + ring + '</div>' +
       '</div>' +
       refreshStatusBar() +
@@ -654,13 +721,15 @@
       '<button class="btn-mini" data-action="edit-note" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">' + (c.note ? '✎ 备注' : '＋备注') + '</button>' +
       '<button class="btn-mini" data-action="toggle-hidden" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">' + (hidden ? '显示' : '隐藏') + '</button>' +
       '<button class="btn-mini danger" data-action="delete-cash" data-board="' + boardKey + '" data-id="' + c.id + '">删除</button>' +
+      '</div>' +
+      '<div class="item-collapse"><button class="btn-collapse" data-action="collapse-item" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">收起 ▲</button></div>' +
       '</div></div>' : '';
     return '' +
       '<div class="cash-row item ' + (hidden ? 'is-hidden' : '') + '">' +
       '<div class="item-head" data-action="expand-item" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">' +
       '<div class="li-main">' +
       '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + '</div>' +
-      '<div class="li-sub">' + boardName(boardKey) + ' · ' + UI.fmtTime(c.time) + '</div>' +
+      (hidden ? '' : '<div class="li-sub">' + boardName(boardKey) + ' · ' + UI.fmtTime(c.time) + '</div>') +
       '</div>' +
       '<div class="li-right">' + right + '</div>' +
       '</div>' + detail +
@@ -720,13 +789,14 @@
           '<button class="btn-mini" data-action="toggle-hidden" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' + (hidden ? '显示' : '隐藏') + '</button>' +
           '<button class="btn-mini danger" data-action="delete-invest" data-board="' + boardKey + '" data-id="' + h.id + '">删除</button>';
       detailInner += '<div class="item-actions">' + actions + '</div>';
+      detailInner += '<div class="item-collapse"><button class="btn-collapse" data-action="collapse-item" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">收起 ▲</button></div>';
     }
     return '' +
       '<div class="hold-row item ' + (hidden ? 'is-hidden' : '') + '">' +
       '<div class="item-head" data-action="expand-item" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' +
       '<div class="li-main">' +
-      '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
-      '<div class="li-sub">' + boardName(boardKey) + ' · ' + (isGold ? '克数 ' : '份额 ') + UI.fmtNum(h.shares, isGold ? 3 : undefined) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3) + '</div>' +
+      '<div class="li-title">' + escapeHtml(h.name) + (hidden ? '' : (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + (isDca ? ' <span class="dca-badge">定投</span>' : '')) + '</div>' +
+      (hidden ? '' : '<div class="li-sub">' + boardName(boardKey) + ' · ' + (isGold ? '克数 ' : '份额 ') + UI.fmtNum(h.shares, isGold ? 3 : undefined) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3) + '</div>') +
       '</div>' +
       '<div class="li-right">' + right + '</div>' +
       '</div>' +
@@ -747,16 +817,22 @@
     const investRows = invest.length === 0 ? '' : invest.map(h => investRowHtml(h, boardKey)).join('');
     const empty = (cash.length === 0 && invest.length === 0)
       ? '<div class="empty">暂无记录，用下方按钮添加</div>' : '';
+    const collapsed = collapsedBoards.has(boardKey);
+    const list = collapsed ? '' : (cashRows + investRows + empty);
+    const collapseHint = collapsed
+      ? '<div class="board-collapsed" data-action="toggle-board-collapse" data-board="' + boardKey + '">▸ 已收起 ' + (cash.length + invest.length) + ' 条明细，点击展开</div>'
+      : '';
     return '' +
-      '<section class="board-card">' +
-      '<div class="board-head" data-board="' + boardKey + '">' +
+      '<section class="board-card ' + (collapsed ? 'is-collapsed' : '') + '">' +
+      '<div class="board-head" data-action="toggle-board-collapse" data-board="' + boardKey + '">' +
       '<div class="bh-left"><div class="board-name">' + def.name + '</div>' +
       '<div class="board-sub">现金 ' + UI.fmtMoney(cashTotal) + ' · 投资 ' + UI.fmtMoney(investTotal) + '</div></div>' +
       '<div class="bh-right"><div class="board-total">' + UI.fmtMoney(boardTotal) + '</div>' +
       '<div class="board-profit ' + UI.changeClass(investProfit) + '">累计 ' + UI.fmtMoney(investProfit) + '</div></div>' +
+      '<span class="chev">▾</span>' +
       '</div>' +
       '<div class="board-body">' +
-      cashRows + investRows + empty +
+      list + collapseHint +
       '<div class="sub-add-row">' +
       '<button class="sub-add" data-action="add-cash-board" data-board="' + boardKey + '">＋ 记一笔现金</button>' +
       '<button class="sub-add" data-action="add-invest-board" data-board="' + boardKey + '">＋ 添加持仓</button>' +
@@ -894,6 +970,7 @@
       '</div>' +
       '<div class="profile-card">' +
       '<div class="pc-title">定投计划</div>' +
+      '<div class="pc-row"><span>定投自动执行<small class="pc-hint">到扣款日自动从来源板块扣款买入</small></span>' + toggle('autoDca', s.autoDca) + '</div>' +
       (plans.length === 0
         ? '<div class="empty" style="padding:10px 0">还没有定投计划，点下方添加</div>'
         : plans.map(p => {
@@ -1025,6 +1102,14 @@
     }
     /* 明细行点击展开/收起：点一下才显示 备注/买入/卖出/定投/编辑/隐藏 等操作 */
     if (a === 'expand-item') { if (expandedItems.has(id)) expandedItems.delete(id); else expandedItems.add(id); render(); return; }
+    /* 明细行内「收起」按钮：折叠当前明细，保留其他展开状态 */
+    if (a === 'collapse-item') { expandedItems.delete(id); render(); return; }
+    /* 板块头点击：折叠/展开该板块全部明细（投资项多时快速滑过） */
+    if (a === 'toggle-board-collapse') {
+      if (collapsedBoards.has(board)) collapsedBoards.delete(board);
+      else collapsedBoards.add(board);
+      render(); return;
+    }
     /* 隐藏明细：数字遮罩 + 不计入总额 */
     if (a === 'toggle-hidden') {
       const kind = el.dataset.kind;
@@ -1064,6 +1149,7 @@
         amount: byAmount ? plan.amount : '',
         shares: byAmount ? '' : plan.shares,
         price: plan.price, note: plan.note,
+        planId: plan.id,
       });
       return;
     }
@@ -1105,6 +1191,7 @@
       else if (k === 'snapshotLimit') { Store.updateSettings({ snapshotLimit: Number(t.value) }); }
       else if (k === 'hideAmount') { Store.updateSettings({ hideAmount: t.checked }); }
       else if (k === 'autoRefreshInvest') { Store.updateSettings({ autoRefreshInvest: t.checked }); }
+      else if (k === 'autoDca') { Store.updateSettings({ autoDca: t.checked }); if (t.checked) { autoDcaCheck(); } }
       render(); return;
     }
   }
@@ -1256,6 +1343,9 @@
     }
 
     render();
+
+    // 自动定投：进入首页时扫描已到扣款日的计划，自动从「扣款来源板块」扣款买入
+    autoDcaCheck();
 
     // PWA Service Worker（仅在 http/https 下注册）
     if (navigator.serviceWorker && location.protocol.indexOf('http') === 0) {

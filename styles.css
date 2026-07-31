@@ -79,8 +79,25 @@ body {
 }
 .total-label { font-size: 13px; opacity: .85; }
 .total-value { font-size: 30px; font-weight: 700; margin: 4px 0; letter-spacing: .5px; }
-.total-profit { font-size: 13px; opacity: .95; }
-.total-profit .up, .total-profit .down { font-weight: 600; }
+/* 总盈亏徽章：蓝底卡上红色看不清 → 改为带底色高对比徽章 */
+.total-profit {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding: 4px 12px; border-radius: 14px;
+  font-size: 13px; font-weight: 600;
+}
+.total-profit.tp-up { background: #fdecee; }
+.total-profit.tp-up .up { color: #c0392b; font-weight: 700; }
+.total-profit.tp-down { background: #e8f6ef; }
+.total-profit.tp-down .down { color: #1e8a5b; font-weight: 700; }
+.total-profit.tp-flat { background: rgba(255,255,255,.85); }
+.total-profit.tp-flat .flat { color: #5b6470; font-weight: 600; }
+.total-profit.tp-today { border: 1px dashed var(--line); }
+
+/* 隐藏明细：除名称与「已隐藏」标记外，其余信息一律不显示 */
+.is-hidden .li-sub { display: none; }
+.is-hidden .li-code,
+.is-hidden .dca-badge,
+.is-hidden .gold-badge { display: none; }
 
 /* 环形图 */
 .ring-wrap { margin-top: 14px; }
@@ -112,6 +129,12 @@ body {
 .board-profit { font-size: 12px; }
 .fold-icon { color: var(--muted); font-size: 14px; width: 16px; text-align: center; }
 .board-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.chev { margin-left: 4px; color: var(--muted); font-size: 13px; transition: transform .2s ease; }
+.board-card.is-collapsed .chev { transform: rotate(-90deg); }
+.board-collapsed { padding: 12px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+.item-collapse { margin-top: 8px; display: flex; justify-content: center; }
+.btn-collapse { width: 100%; padding: 8px; border: 1px solid var(--line); background: #f5f7fa; border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.btn-collapse:active { background: #eef1f5; }
 .record-btn {
   width: 100%; margin-top: 10px; padding: 10px; border-radius: 10px;
   border: 1px dashed var(--brand); background: #eaf2ff; color: var(--brand-d);
@@ -121,11 +144,11 @@ body {
 /* 板块资产明细（现金 / 投资 + 快捷新增） */
 .board-detail { margin-top: 10px; background: #f7f9fc; border-radius: 12px; padding: 4px 6px; }
 .bd-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 10px 8px; border-radius: 8px;
 }
 .bd-row + .bd-row { border-top: 1px solid var(--line); }
-.bd-label { font-size: 14px; font-weight: 500; flex: 1; }
+.bd-label { font-size: 14px; font-weight: 500; flex: 1 0 auto; white-space: nowrap; }
 .bd-val {
   font-size: 15px; font-weight: 700; color: var(--text);
   font-variant-numeric: tabular-nums; margin-right: 4px;
@@ -144,6 +167,42 @@ body {
 }
 .bd-sell:active { transform: scale(.95); }
 
+/* 板块内 现金/投资 折叠按钮组（点击展开，页面更清爽） */
+.sec-btns { display: flex; gap: 10px; margin-top: 10px; }
+.sec-btn {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 11px 12px; border: none; border-radius: 12px; cursor: pointer;
+  background: #f2f4f7; color: var(--text); text-align: left;
+  transition: background .15s;
+}
+.sec-btn.open { background: #eaf2ff; }
+.sec-ico { font-size: 16px; flex: none; }
+.sec-name { font-size: 14px; font-weight: 600; }
+.sec-val { font-size: 14px; font-weight: 700; margin-left: auto; font-variant-numeric: tabular-nums; }
+.sec-chev { font-size: 12px; color: var(--muted); margin-left: 4px; }
+
+.sub-body { padding: 6px 0 2px; }
+.sub-add {
+  width: 100%; margin-top: 8px; padding: 9px; border-radius: 10px;
+  border: 1px dashed var(--brand); background: #eaf2ff; color: var(--brand-d);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.sub-add.gold { border-color: #d4a017; background: #fff8e6; color: #9a6a00; }
+.sub-add-row { display: flex; gap: 8px; margin-top: 10px; }
+.sub-add-row .sub-add { margin-top: 0; flex: 1; }
+/* 投资区操作按钮：定投/卖出/金/＋ 同一行、等宽对齐 */
+.inv-actions { display: flex; gap: 8px; margin: 8px 0 2px; }
+.inv-act {
+  flex: 1; min-width: 0; height: 38px; border-radius: 10px; cursor: pointer;
+  font-size: 14px; font-weight: 600; line-height: 1;
+  background: #fff; color: var(--brand-d); border: 1px solid var(--brand);
+  display: flex; align-items: center; justify-content: center;
+}
+.inv-act.gold { color: #b8860b; border-color: #e0c068; background: #fff8e6; }
+.inv-act.add { background: var(--brand); color: #fff; border-color: var(--brand); font-size: 20px; }
+.inv-act:active { transform: scale(.96); }
+
 /* 列表项 / 左滑 */
 .swipe-item { position: relative; overflow: hidden; border-radius: 10px; margin-top: 8px; }
 .swipe-inner { position: relative; z-index: 2; background: var(--card); transition: transform .2s; }
@@ -155,9 +214,12 @@ body {
   display: flex; align-items: center; gap: 10px; padding: 12px 10px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--card);
 }
-.li-title { font-size: 14px; font-weight: 500; }
+.li-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.li-right { flex: 0 0 auto; text-align: right; display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+.li-title { font-size: 15px; font-weight: 600; line-height: 1.35; }
 .li-code { font-size: 11px; color: var(--muted); font-weight: 400; }
 .dca-badge { font-size: 10px; font-weight: 600; color: #fff; background: #10b981; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
+.gold-badge { font-size: 10px; font-weight: 600; color: #fff; background: #d4a017; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
 
 /* 定投提醒横幅 */
 .dca-reminder { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 12px; padding: 12px; margin-bottom: 14px; }
@@ -175,11 +237,27 @@ body {
 .dca-p-main { flex: 1; min-width: 0; }
 .due-tag { color: #c2410c; font-size: 11px; font-weight: 600; }
 .li-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* 备注按钮 + 备注展示（简洁不冗余） */
+.li-note-btn {
+  display: inline-block; margin-top: 6px; padding: 3px 11px; font-size: 12px;
+  color: var(--brand-d); background: #eef2ff; border: none; border-radius: 12px; cursor: pointer;
+}
+.li-note-btn:active { transform: scale(.96); }
+.li-note { margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.45; word-break: break-all; }
 .li-amount { font-size: 15px; font-weight: 600; text-align: right; white-space: nowrap; }
 .li-pct { font-size: 12px; text-align: right; white-space: nowrap; }
 .li > div:first-child { flex: 1; min-width: 0; }
 
 .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 18px 0; }
+
+/* 首页 现金/持有 切换条 */
+.seg-tabs { display: flex; gap: 8px; margin: 12px 14px 4px; }
+.seg-tab {
+  flex: 1; padding: 10px 0; font-size: 14px; font-weight: 600; text-align: center;
+  color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+}
+.seg-tab.active { color: #fff; background: var(--brand); border-color: var(--brand); }
+.home-cash { padding: 4px 14px 0; }
 
 /* 快捷操作栏 */
 .quick-bar { display: flex; gap: 10px; margin-top: 16px; }
@@ -208,13 +286,26 @@ body {
 .dca-btn-sub { font-weight: 400; font-size: 11px; opacity: .85; }
 .btn-mini.loading { opacity: .6; }
 
-.hold-row {
-  display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line);
-  border-radius: 10px; padding: 12px 10px; margin-top: 8px; position: relative; cursor: pointer;
+/* 明细行（现金/投资通用）：默认收起，点击展开操作 */
+.item, .cash-row, .hold-row {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+  margin-top: 8px; overflow: hidden;
 }
-.hold-main { flex: 1; min-width: 0; }
-.hold-right { text-align: right; }
-.expand-ico { color: var(--muted); font-size: 12px; }
+.item-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 12px; cursor: pointer;
+}
+.item-head:active { background: #f5f7fa; }
+.item .li-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.item .li-right { flex: 0 0 auto; text-align: right; display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+.item-detail { padding: 0 12px 12px; }
+.item-detail .hd-pline { margin-top: 0; border-radius: 10px; }
+.item-detail .hd-grid, .item-detail .hd-returns { margin-left: 0; margin-right: 0; }
+.item-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.item-actions .btn-mini { flex: 1 1 auto; text-align: center; padding: 8px 4px; min-width: 60px; }
+/* 隐藏态：数字不可见 + 视觉弱化 */
+.is-hidden { opacity: .55; }
+.is-hidden .item-head { font-style: italic; }
+.is-hidden .li-amount { color: var(--muted); }
 .hold-detail { background: #fafbfc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; padding: 12px; margin-top: -2px; }
 .hd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 13px; }
 .hd-grid > div { display: flex; flex-direction: column; }
@@ -230,6 +321,13 @@ body {
   border-radius: 0 0 10px 10px; margin-top: -9px;
 }
 .hold-actions .btn-mini { flex: 1; text-align: center; padding: 8px 4px; }
+/* 每只基金下方的本日/累计盈亏一行 */
+.hd-pline { display: flex; gap: 12px; padding: 8px 12px 10px; background: #fafbfc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; margin-top: -9px; }
+.pl-item { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; }
+.pl-k { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pl-v { font-size: 14px; font-weight: 600; }
+.pl-p { font-size: 12px; }
+.pl-sub { font-size: 12px; color: var(--muted); }
 
 /* 个人中心 */
 .profile-card { background: var(--card); border-radius: 14px; margin-top: 12px; box-shadow: var(--shadow); overflow: hidden; }
@@ -237,6 +335,7 @@ body {
 .pc-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-top: 1px solid var(--line); font-size: 14px; }
 .pc-row.clickable { cursor: pointer; }
 .pc-row.danger { color: #e34d59; }
+.pc-hint { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
 .about { text-align: center; color: var(--muted); font-size: 12px; margin: 18px 0 8px; line-height: 1.7; }
 
 /* 登录 / 设置口令遮罩 */

@@ -21,8 +21,9 @@
       settings: {
         hideAmount: false,        // 金额隐藏
         colorScheme: 'redUp',      // 红涨绿跌（默认，A股习惯）/ greenUp 绿涨红跌
-        autoRefreshInvest: true,   // 进入投资页自动刷新
+        autoRefreshInvest: true,   // 进入首页自动刷新净值
         snapshotLimit: 30,         // 刷新快照最大留存
+        autoDca: true,             // 定投自动执行：到扣款日 App 自动从指定板块现金扣款买入
       },
       boards,
       trades: [],
@@ -149,6 +150,7 @@
       time: t.time || Date.now(),
       note: (t.note || '').toString().slice(0, 60),
       dca: !!(t.dca && action === 'buy'),
+      planId: t.planId || undefined,
     };
     state.trades.unshift(rec);
     const b = state.boards[rec.board];
@@ -166,11 +168,11 @@
         save();
       }
     }
-    // 定投计划：若本次为带 dca 的买入，标记匹配计划已完成本期
-    if (rec.action === 'buy' && rec.dca && rec.board && rec.code) {
-      state.dcaPlans.forEach(p => {
-        if (p.enabled !== false && p.board === rec.board && p.code === rec.code) state.dcaDone[p.id] = rec.time;
-      });
+    // 定投计划：仅当本次买入明确关联某个计划（planId）时，标记该计划已完成本期。
+    // 不能按「同基金代码」批量标记，否则同一基金的多笔定投计划会互相干扰（一笔执行就全部算完成）。
+    if (rec.action === 'buy' && rec.dca && rec.planId) {
+      const p = state.dcaPlans.find(x => x.id === rec.planId);
+      if (p) state.dcaDone[p.id] = rec.time;
     }
     save();
     return rec;
@@ -197,9 +199,10 @@
 
   /* ---------------- 定投计划 ---------------- */
   function addDcaPlan(plan) {
-    const rec = Object.assign({ id: uid(), enabled: true, lastDone: 0 }, plan);
+    const rec = Object.assign({ id: uid(), enabled: true, lastDone: 0, lastAuto: 0, fromBoard: (plan && plan.board) || '' }, plan);
     state.dcaPlans.push(rec);
     save();
+    return rec;
   }
   function updateDcaPlan(id, patch) {
     const p = state.dcaPlans.find(x => x.id === id); if (!p) return;
