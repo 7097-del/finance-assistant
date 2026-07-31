@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-31-6';
+  const APP_VERSION = '2026-08-01-1';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -12,10 +12,7 @@
   ];
 
   let currentTab = 'home';
-  let homeView = 'cash';                  // 首页视图：'cash' 现金页(仅收支) / 'hold' 持有(板块总览)
-  const foldState = {};                 // 板块折叠状态（内存）
-  const subOpen = {};                   // 板块内 现金/投资 子区展开状态（内存）
-  const expandedHoldings = new Set();   // 持仓展开详情
+  const expandedItems = new Set();      // 已展开的明细行 id（现金/投资通用，点击才显示操作）
   let refreshing = false;
   const investFilter = { board: 'all', kw: '' };
   const ledgerFilter = { board: 'all' };
@@ -620,15 +617,12 @@
   }
 
   /* ---------------- 渲染：首页 ---------------- */
+  /* 首页：单一综合页。按板块分组，每组内同时列出「现金」与「投资」明细，
+   * 每条明细默认收起，点击才展开显示 备注/买入/卖出/定投/编辑/隐藏/删除 等操作。 */
   function renderHome() {
     const g = Store.globalTotals();
     const ring = buildRing();
-    const toggle = '' +
-      '<div class="seg-tabs">' +
-      '<button class="seg-tab ' + (homeView === 'cash' ? 'active' : '') + '" data-action="home-view" data-view="cash">💰 现金</button>' +
-      '<button class="seg-tab ' + (homeView === 'hold' ? 'active' : '') + '" data-action="home-view" data-view="hold">📈 持有</button>' +
-      '</div>';
-    const body = homeView === 'cash' ? renderHomeCash() : (renderDcaReminder() + Store.BOARD_DEFS.map(b => renderBoardCard(b.key)).join(''));
+    const body = renderDcaReminder() + Store.BOARD_DEFS.map(b => renderBoardSection(b.key)).join('');
     return '' +
       '<div class="total-card">' +
       '<div class="total-label">总资产（元）</div>' +
@@ -637,35 +631,139 @@
       '<div class="ring-wrap">' + ring + '</div>' +
       '</div>' +
       refreshStatusBar() +
-      toggle +
       body +
       '<div class="quick-bar">' +
       '<button class="quick-btn" data-action="add-cash"><span class="q-ico">✎</span>记一笔</button>' +
+      '<button class="quick-btn" data-action="add-holding"><span class="q-ico">📈</span>加投资</button>' +
       '<button class="quick-btn" data-action="refresh"><span class="q-ico">↻</span>净值更新</button>' +
-      '<button class="quick-btn" data-action="transfer"><span class="q-ico">⇄</span>资产调拨</button>' +
+      '<button class="quick-btn" data-action="transfer"><span class="q-ico">⇄</span>调拨</button>' +
       '</div>';
   }
 
-  /* 首页「现金」视图：跨板块、只列收支(支出/收入)，每行可备注/删除 */
-  function cashRowHtml(c) {
-    return swipeItem({
-      kind: 'cash', board: c.boardKey, id: c.id,
-      main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + '</div>' +
-        '<div class="li-sub">' + boardName(c.boardKey) + ' · ' + UI.fmtTime(c.time) + '</div>' +
-        noteLine(c.note) + noteBtn('cash', c.boardKey, c.id, c.note),
-      right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
-    });
-  }
-  function renderHomeCash() {
-    const all = [];
-    Store.BOARD_DEFS.forEach(b => Store.state.boards[b.key].cash.forEach(c => all.push(Object.assign({ boardKey: b.key }, c))));
-    all.sort((a, b) => b.time - a.time);
-    const rows = all.length === 0
-      ? '<div class="empty">还没有现金记录，点击下方「＋ 记一笔现金」</div>'
-      : all.map(cashRowHtml).join('');
-    return '<div class="home-cash">' + rows +
-      '<button class="sub-add block" data-action="add-cash">＋ 记一笔现金</button>' +
+  /* 现金明细行（可点击展开操作） */
+  function cashRowHtml(c, boardKey) {
+    const hidden = !!c.hidden;
+    const expanded = expandedItems.has(c.id);
+    const right = hidden
+      ? '<span class="li-amount muted">已隐藏</span>'
+      : '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>';
+    const detail = expanded ? '' +
+      '<div class="item-detail">' +
+      noteLine(c.note) +
+      '<div class="item-actions">' +
+      '<button class="btn-mini" data-action="edit-note" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">' + (c.note ? '✎ 备注' : '＋备注') + '</button>' +
+      '<button class="btn-mini" data-action="toggle-hidden" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">' + (hidden ? '显示' : '隐藏') + '</button>' +
+      '<button class="btn-mini danger" data-action="delete-cash" data-board="' + boardKey + '" data-id="' + c.id + '">删除</button>' +
+      '</div></div>' : '';
+    return '' +
+      '<div class="cash-row item ' + (hidden ? 'is-hidden' : '') + '">' +
+      '<div class="item-head" data-action="expand-item" data-kind="cash" data-board="' + boardKey + '" data-id="' + c.id + '">' +
+      '<div class="li-main">' +
+      '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + '</div>' +
+      '<div class="li-sub">' + boardName(boardKey) + ' · ' + UI.fmtTime(c.time) + '</div>' +
+      '</div>' +
+      '<div class="li-right">' + right + '</div>' +
+      '</div>' + detail +
       '</div>';
+  }
+
+  /* 投资持仓明细行（可点击展开操作 + 盈亏/详情） */
+  function investRowHtml(h, boardKey) {
+    const hidden = !!h.hidden;
+    const expanded = expandedItems.has(h.id);
+    const isGold = h.kind === 'gold';
+    const plan = findPlan(boardKey, h.code);
+    const isDca = !!plan || Store.state.trades.some(t => t.code === h.code && t.board === boardKey && t.dca);
+    const w = periodReturn(h.navHistory, 7);
+    const m = periodReturn(h.navHistory, 30);
+    const q = periodReturn(h.navHistory, 90);
+    const y = periodReturn(h.navHistory, 365);
+    const rt = v => v === null ? '<span class="muted">—</span>' : '<span class="' + UI.changeClass(v) + '">' + UI.fmtPct(v) + '</span>';
+    const planLine = plan
+      ? '<div class="hd-plan">📅 定投计划：' + freqLabel(plan) + ' · ' + planAmountLabel(plan) +
+        (isDue(plan) ? ' <span class="due-tag">待记</span>' : '') + '</div>'
+      : '';
+    const right = hidden
+      ? '<span class="li-amount muted">已隐藏</span>'
+      : '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
+        '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>' +
+        '<div class="li-pct ' + UI.changeClass(h.totalProfit) + '">累计 ' + UI.fmtMoney(h.totalProfit) + '</div>';
+    let detailInner = '';
+    if (expanded) {
+      detailInner += noteLine(h.note);
+      detailInner += holdPline(h);
+      if (!hidden) {
+        detailInner +=
+          '<div class="hd-grid">' +
+          '<div><span class="muted">' + (isGold ? '如意金价(元/克)' : '最新净值') + '</span>' + UI.fmtNum(h.lastNav, isGold ? 3 : 4) + (isGold ? '' : (h.navDate ? '<span class="muted">' + h.navDate + '</span>' : '')) + '</div>' +
+          '<div><span class="muted">平均成本</span>' + UI.fmtNum(h.avgCost, 3) + '</div>' +
+          '<div><span class="muted">持仓份额</span>' + UI.fmtNum(h.shares) + '</div>' +
+          '<div><span class="muted">投入本金</span>' + UI.fmtMoney(h.shares * h.avgCost) + '</div>' +
+          '<div><span class="muted">当前市值</span>' + UI.fmtMoney(h.marketValue) + '</div>' +
+          '<div><span class="muted">累计盈亏</span><span class="' + UI.changeClass(h.totalProfit) + '">' + UI.fmtMoney(h.totalProfit) + '</span></div>' +
+          '</div>' + planLine +
+          '<div class="hd-returns">' +
+          '<div>近1周 ' + rt(w) + '</div><div>近1月 ' + rt(m) + '</div>' +
+          '<div>近3月 ' + rt(q) + '</div><div>近1年 ' + rt(y) + '</div>' +
+          '</div>';
+      }
+      const actions = isGold
+        ? '<button class="btn-mini" data-action="edit-holding" data-board="' + boardKey + '" data-id="' + h.id + '">编辑</button>' +
+          '<button class="btn-mini" data-action="edit-note" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' + (h.note ? '✎ 备注' : '＋备注') + '</button>' +
+          '<button class="btn-mini" data-action="toggle-hidden" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' + (hidden ? '显示' : '隐藏') + '</button>' +
+          '<button class="btn-mini danger" data-action="delete-invest" data-board="' + boardKey + '" data-id="' + h.id + '">删除</button>'
+        : '<button class="btn-mini act-buy" data-action="trade" data-board="' + boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
+          '<button class="btn-mini act-sell" data-action="trade" data-board="' + boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
+          '<button class="btn-mini dca-btn" data-action="dca-plan" data-board="' + boardKey + '" data-id="' + h.id + '">' + (plan ? '定投计划 ·<span class="dca-btn-sub"> ' + freqLabel(plan) + '</span>' : '＋ 定投计划') + '</button>' +
+          '<button class="btn-mini" data-action="edit-holding" data-board="' + boardKey + '" data-id="' + h.id + '">编辑</button>' +
+          '<button class="btn-mini" data-action="edit-note" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' + (h.note ? '✎ 备注' : '＋备注') + '</button>' +
+          '<button class="btn-mini" data-action="toggle-hidden" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' + (hidden ? '显示' : '隐藏') + '</button>' +
+          '<button class="btn-mini danger" data-action="delete-invest" data-board="' + boardKey + '" data-id="' + h.id + '">删除</button>';
+      detailInner += '<div class="item-actions">' + actions + '</div>';
+    }
+    return '' +
+      '<div class="hold-row item ' + (hidden ? 'is-hidden' : '') + '">' +
+      '<div class="item-head" data-action="expand-item" data-kind="invest" data-board="' + boardKey + '" data-id="' + h.id + '">' +
+      '<div class="li-main">' +
+      '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
+      '<div class="li-sub">' + boardName(boardKey) + ' · ' + (isGold ? '克数 ' : '份额 ') + UI.fmtNum(h.shares, isGold ? 3 : undefined) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3) + '</div>' +
+      '</div>' +
+      '<div class="li-right">' + right + '</div>' +
+      '</div>' +
+      (expanded ? '<div class="item-detail">' + detailInner + '</div>' : '') +
+      '</div>';
+  }
+
+  /* 板块分区：头部(名称+现金/投资小计) + 现金明细 + 投资明细 + 添加入口 */
+  function renderBoardSection(boardKey) {
+    const def = Store.BOARD_DEFS.find(b => b.key === boardKey);
+    const b = Store.state.boards[boardKey];
+    const cash = b.cash, invest = b.invest;
+    const cashTotal = Store.cashTotal(boardKey);
+    const investTotal = Store.investTotal(boardKey);
+    const boardTotal = Store.boardTotal(boardKey);
+    const investProfit = Store.boardInvestTotalProfit(boardKey);
+    const cashRows = cash.length === 0 ? '' : cash.map(c => cashRowHtml(c, boardKey)).join('');
+    const investRows = invest.length === 0 ? '' : invest.map(h => investRowHtml(h, boardKey)).join('');
+    const empty = (cash.length === 0 && invest.length === 0)
+      ? '<div class="empty">暂无记录，用下方按钮添加</div>' : '';
+    return '' +
+      '<section class="board-card">' +
+      '<div class="board-head" data-board="' + boardKey + '">' +
+      '<div class="bh-left"><div class="board-name">' + def.name + '</div>' +
+      '<div class="board-sub">现金 ' + UI.fmtMoney(cashTotal) + ' · 投资 ' + UI.fmtMoney(investTotal) + '</div></div>' +
+      '<div class="bh-right"><div class="board-total">' + UI.fmtMoney(boardTotal) + '</div>' +
+      '<div class="board-profit ' + UI.changeClass(investProfit) + '">累计 ' + UI.fmtMoney(investProfit) + '</div></div>' +
+      '</div>' +
+      '<div class="board-body">' +
+      cashRows + investRows + empty +
+      '<div class="sub-add-row">' +
+      '<button class="sub-add" data-action="add-cash-board" data-board="' + boardKey + '">＋ 记一笔现金</button>' +
+      '<button class="sub-add" data-action="add-invest-board" data-board="' + boardKey + '">＋ 添加持仓</button>' +
+      '<button class="sub-add gold" data-action="add-gold-board" data-board="' + boardKey + '">＋ 实体黄金</button>' +
+      '</div>' +
+      '</div>' +
+      '</section>';
   }
 
   /* 净值刷新状态条：让「什么时候刷的、刷到哪天的净值」一目了然 */
@@ -724,117 +822,6 @@
       items + '</div>';
   }
 
-  function renderBoardCard(boardKey) {
-    const def = Store.BOARD_DEFS.find(b => b.key === boardKey);
-    const cash = Store.state.boards[boardKey].cash;
-    const invest = Store.state.boards[boardKey].invest;
-    const cashTotal = Store.cashTotal(boardKey);
-    const investTotal = Store.investTotal(boardKey);
-    const boardTotal = Store.boardTotal(boardKey);
-    const investProfit = Store.boardInvestTotalProfit(boardKey);
-    const folded = foldState[boardKey];
-    const cashHtml = cash.length === 0 ? '' : cash.map(c => swipeItem({
-      kind: 'cash', board: boardKey, id: c.id,
-      main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + '</div>' +
-        '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>' +
-        noteLine(c.note) + noteBtn('cash', c.boardKey, c.id, c.note),
-      right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
-    })).join('');
-    const investHtml = invest.length === 0 ? '' : invest.map(h => {
-      const isGold = h.kind === 'gold';
-      const sub = isGold
-        ? '克数 ' + UI.fmtNum(h.shares, 3) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3) + ' 元/克'
-        : '份额 ' + UI.fmtNum(h.shares) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3);
-      const dl = navDayLabel(h);
-      return swipeItem({
-        kind: 'invest', board: boardKey, id: h.id,
-        main: '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + '</div>' +
-          '<div class="li-sub">' + sub + '</div>' +
-          '<div class="li-sub pl-sub">' + dl + ' ' + UI.fmtMoney(h.todayProfit) + ' · 累计 ' + UI.fmtMoney(h.totalProfit) + '</div>',
-        right: '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
-          '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>',
-      });
-    }).join('');
-    const cashOpen = subOpen[boardKey + ':cash'] === true;
-    const investOpen = subOpen[boardKey + ':invest'] === true;
-    const empty = (cash.length === 0 && invest.length === 0) ? '<div class="empty">暂无记录，点上方「现金 / 投资」展开后添加</div>' : '';
-    const detailHtml = '' +
-      '<div class="sec-btns">' +
-        '<button class="sec-btn ' + (cashOpen ? 'open' : '') + '" data-action="toggle-sub" data-board="' + boardKey + '" data-sub="cash">' +
-          '<span class="sec-ico">💰</span>' +
-          '<span class="sec-name">现金</span>' +
-          '<span class="sec-val">' + UI.fmtMoney(cashTotal) + '</span>' +
-          '<span class="sec-chev">' + (cashOpen ? '▾' : '▸') + '</span>' +
-        '</button>' +
-        '<button class="sec-btn ' + (investOpen ? 'open' : '') + '" data-action="toggle-sub" data-board="' + boardKey + '" data-sub="invest">' +
-          '<span class="sec-ico">📈</span>' +
-          '<span class="sec-name">投资</span>' +
-          '<span class="sec-val ' + UI.changeClass(investProfit) + '">' + UI.fmtMoney(investTotal) + '</span>' +
-          '<span class="sec-chev">' + (investOpen ? '▾' : '▸') + '</span>' +
-        '</button>' +
-      '</div>' +
-      (cashOpen ? '<div class="sub-body">' + cashHtml +
-        '<button class="sub-add" data-action="add-cash-board" data-board="' + boardKey + '">＋ 记一笔现金</button>' +
-      '</div>' : '') +
-      (investOpen ? '<div class="sub-body">' +
-        '<div class="inv-actions">' +
-          '<button class="inv-act" data-action="dca-plan-board" data-board="' + boardKey + '">定投</button>' +
-          '<button class="inv-act" data-action="sell-invest-board" data-board="' + boardKey + '">卖出</button>' +
-          '<button class="inv-act gold" data-action="add-gold-board" data-board="' + boardKey + '">金</button>' +
-          '<button class="inv-act add" data-action="add-invest-board" data-board="' + boardKey + '">＋</button>' +
-        '</div>' +
-        investHtml +
-      '</div>' : '');
-    return '' +
-      '<section class="board-card">' +
-      '<div class="board-head" data-action="toggle-fold" data-board="' + boardKey + '">' +
-      '<div class="bh-left"><div class="board-name">' + def.name + '</div>' +
-      '<div class="board-sub">现金 ' + UI.fmtMoney(cashTotal) + ' · 投资 ' + UI.fmtMoney(investTotal) + '</div></div>' +
-      '<div class="bh-right"><div class="board-total">' + UI.fmtMoney(boardTotal) + '</div>' +
-      '<div class="board-profit ' + UI.changeClass(investProfit) + '">累计 ' + UI.fmtMoney(investProfit) + '</div></div>' +
-      '<span class="fold-icon">' + (folded ? '▸' : '▾') + '</span>' +
-      '</div>' +
-      (folded ? '' :
-        '<div class="board-body">' + detailHtml + empty + '</div>') +
-      '</section>';
-  }
-
-  /* ---------------- 渲染：投资专区 ---------------- */
-  function renderInvest() {
-    let holdings = Store.allHoldings();
-    if (investFilter.board !== 'all') holdings = holdings.filter(h => h.boardKey === investFilter.board);
-    if (investFilter.kw) {
-      const kw = investFilter.kw.toLowerCase();
-      holdings = holdings.filter(h => (h.code + h.name).toLowerCase().includes(kw));
-    }
-    const listHtml = holdings.length === 0
-      ? '<div class="empty">暂无持仓' + (Store.allHoldings().length === 0 ? '，点击下方「+ 添加持仓」开始' : '') + '</div>'
-      : holdings.map(h => renderHoldingRow(h)).join('');
-    const trades = Store.state.trades.filter(t => investFilter.board === 'all' || t.board === investFilter.board);
-    const tradeHtml = trades.length === 0
-      ? '<div class="empty">暂无交易记录</div>'
-      : trades.map(t => {
-        const def = Store.BOARD_DEFS.find(b => b.key === t.board);
-        return swipeItem({
-          kind: 'trade', board: t.board, id: t.id,
-          main: '<div class="li-title"><span class="' + (t.action === 'buy' ? 'up' : 'down') + '">' + (t.action === 'buy' ? '买入' : '卖出') + '</span> ' + t.code + (t.note ? ' · ' + escapeHtml(t.note) : '') + '</div>' +
-            '<div class="li-sub">' + def.name + ' · ' + UI.fmtTime(t.time) + '</div>',
-          right: '<div class="li-amount">份额 ' + UI.fmtNum(t.shares) + '</div><div class="li-sub">净值 ' + UI.fmtNum(t.price) + '</div>',
-        });
-      }).join('');
-
-    return '' +
-      refreshStatusBar() +
-      '<div class="filter-bar">' +
-      '<select class="f-select" data-filter="board">' + '<option value="all">全部板块</option>' + boardSelectOptions(investFilter.board) + '</select>' +
-      '<input class="f-input" data-filter="kw" placeholder="搜索代码/名称" value="' + (investFilter.kw || '') + '">' +
-      '</div>' +
-      '<div class="section-head"><span>全部持仓（' + holdings.length + '）</span><button class="btn-mini" data-action="add-gold">+ 实体黄金</button><button class="btn-mini primary" data-action="add-holding">+ 添加持仓</button></div>' +
-      listHtml +
-      '<div class="section-head"><span>交易记录（' + trades.length + '）</span><button class="btn-mini" data-action="snapshot-history">刷新历史</button></div>' +
-      tradeHtml;
-  }
-
   /* 今日 YYYY-MM-DD（本地） */
   function todayYMD() {
     const d = new Date();
@@ -872,79 +859,13 @@
     return note ? '<div class="li-note">📝 ' + escapeHtml(note) + '</div>' : '';
   }
 
-  function renderHoldingRow(h) {
-    const expanded = expandedHoldings.has(h.id);
-    const isGold = h.kind === 'gold';
-    const plan = findPlan(h.boardKey, h.code);
-    const isDca = !!plan || Store.state.trades.some(t => t.code === h.code && t.board === h.boardKey && t.dca);
-    const w = periodReturn(h.navHistory, 7);
-    const m = periodReturn(h.navHistory, 30);
-    const q = periodReturn(h.navHistory, 90);
-    const y = periodReturn(h.navHistory, 365);
-    const rt = v => v === null ? '<span class="muted">—</span>' : '<span class="' + UI.changeClass(v) + '">' + UI.fmtPct(v) + '</span>';
-    const planLine = plan
-      ? '<div class="hd-plan">📅 定投计划：' + freqLabel(plan) + ' · ' + planAmountLabel(plan) +
-        (isDue(plan) ? ' <span class="due-tag">待记</span>' : '') + '</div>'
-      : '';
-    const detail = expanded ? '' +
-      '<div class="hold-detail">' +
-      '<div class="hd-grid">' +
-      '<div><span class="muted">' + (isGold ? '如意金价(元/克)' : '最新净值') + '</span>' + UI.fmtNum(h.lastNav, isGold ? 3 : 4) + (isGold ? '' : (h.navDate ? '<span class="muted">' + h.navDate + '</span>' : '')) + '</div>' +
-      '<div><span class="muted">平均成本</span>' + UI.fmtNum(h.avgCost, 3) + '</div>' +
-      '<div><span class="muted">持仓份额</span>' + UI.fmtNum(h.shares) + '</div>' +
-      '<div><span class="muted">投入本金</span>' + UI.fmtMoney(h.shares * h.avgCost) + '</div>' +
-      '<div><span class="muted">当前市值</span>' + UI.fmtMoney(h.marketValue) + '</div>' +
-      '<div><span class="muted">累计盈亏</span><span class="' + UI.changeClass(h.totalProfit) + '">' + UI.fmtMoney(h.totalProfit) + '</span></div>' +
-      '</div>' + planLine +
-      '<div class="hd-returns">' +
-      '<div>近1周 ' + rt(w) + '</div><div>近1月 ' + rt(m) + '</div>' +
-      '<div>近3月 ' + rt(q) + '</div><div>近1年 ' + rt(y) + '</div>' +
-      '</div>' +
-      '<div class="hd-actions">' +
-      '<button class="btn-mini" data-action="edit-holding" data-board="' + h.boardKey + '" data-id="' + h.id + '">编辑</button>' +
-      '<button class="btn-mini danger" data-action="delete-invest" data-board="' + h.boardKey + '" data-id="' + h.id + '">删除</button>' +
-      '</div></div>' : '';
-    return '' +
-      '<div class="hold-row" data-action="expand" data-id="' + h.id + '">' +
-      '<div class="hold-main">' +
-      '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + (isDca ? ' <span class="dca-badge">定投</span>' : '') + '</div>' +
-      '<div class="li-sub">' + h.boardName + ' · ' + (isGold ? '克数 ' : '份额 ') + UI.fmtNum(h.shares, isGold ? 3 : undefined) + '</div>' +
-      noteLine(h.note) + noteBtn('invest', h.boardKey, h.id, h.note) +
-      '</div>' +
-      '<div class="hold-right">' +
-      '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
-      '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>' +
-      '<div class="li-pct ' + UI.changeClass(h.totalProfit) + '">累计 ' + UI.fmtMoney(h.totalProfit) + '</div>' +
-      '</div>' +
-      (expanded ? '<span class="expand-ico">▴</span>' : '<span class="expand-ico">▾</span>') +
-      '</div>' +
-      holdPline(h) +
-      (isGold
-        ? '<div class="hold-actions">' +
-          '<button class="btn-mini" data-action="edit-holding" data-board="' + h.boardKey + '" data-id="' + h.id + '">编辑</button>' +
-          '<button class="btn-mini danger" data-action="delete-invest" data-board="' + h.boardKey + '" data-id="' + h.id + '">删除</button>' +
-          '</div>'
-        : '<div class="hold-actions">' +
-          '<button class="btn-mini act-buy" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
-          '<button class="btn-mini act-sell" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
-          '<button class="btn-mini dca-btn" data-action="dca-plan" data-board="' + h.boardKey + '" data-id="' + h.id + '">' +
-          (plan ? '定投计划 ·<span class="dca-btn-sub"> ' + freqLabel(plan) + '</span>' : '＋ 定投计划') + '</button>' +
-          '</div>') + detail;
-  }
-
-  /* ---------------- 渲染：收支明细 ---------------- */
+  /* ---------------- 渲染：收支明细（与时间轴一致，沿用首页可展开明细行） ---------------- */
   function renderLedger() {
-    let items = Store.allCash().sort((a, b) => b.time - a.time);
+    let items = Store.allCash().slice().sort((a, b) => b.time - a.time);
     if (ledgerFilter.board !== 'all') items = items.filter(c => c.boardKey === ledgerFilter.board);
     const html = items.length === 0
       ? '<div class="empty">暂无收支记录</div>'
-      : items.map(c => swipeItem({
-        kind: 'cash', board: c.boardKey, id: c.id,
-        main: '<div class="li-title">' + (c.type === 'expense' ? '支出' : '收入') + ' · ' + c.boardName + '</div>' +
-          '<div class="li-sub">' + UI.fmtTime(c.time) + '</div>' +
-          noteLine(c.note) + noteBtn('cash', c.boardKey, c.id, c.note),
-        right: '<div class="li-amount ' + (c.type === 'expense' ? 'down' : 'up') + '">' + (c.type === 'expense' ? '-' : '+') + UI.fmtMoney(c.amount) + '</div>',
-      })).join('');
+      : items.map(c => cashRowHtml(c, c.boardKey)).join('');
     return '' +
       '<div class="filter-bar">' +
       '<select class="f-select" data-filter="ledger-board"><option value="all">全部板块</option>' + boardSelectOptions(ledgerFilter.board) + '</select>' +
@@ -968,7 +889,7 @@
       '</div>' +
       '<div class="profile-card">' +
       '<div class="pc-title">投资专区</div>' +
-      '<div class="pc-row"><span>进入投资页自动刷新净值</span>' + toggle('autoRefreshInvest', s.autoRefreshInvest) + '</div>' +
+      '<div class="pc-row"><span>进入首页自动刷新净值</span>' + toggle('autoRefreshInvest', s.autoRefreshInvest) + '</div>' +
       '<div class="pc-row"><span>刷新历史最大留存</span><select class="f-select" data-setting="snapshotLimit">' + snapOpts + '</select></div>' +
       '</div>' +
       '<div class="profile-card">' +
@@ -1026,15 +947,15 @@
     const page = document.getElementById('page');
     let html = '';
     if (currentTab === 'home') html = renderHome();
-    else if (currentTab === 'invest') html = renderInvest();
     else if (currentTab === 'ledger') html = renderLedger();
     else if (currentTab === 'profile') html = renderProfile();
+    else html = renderHome();
     page.innerHTML = html;
     page.scrollTop = 0;
     bindSwipe(page);
     // 标题
-    const titles = { home: '资产总览', invest: '投资专区', ledger: '收支明细', profile: '个人中心' };
-    document.getElementById('top-title').textContent = titles[currentTab];
+    const titles = { home: '资产总览', ledger: '收支明细', profile: '个人中心' };
+    document.getElementById('top-title').textContent = titles[currentTab] || '资产总览';
     // tab 高亮
     document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === currentTab));
   }
@@ -1070,7 +991,6 @@
       Store.updateSettings({ hideAmount: !Store.state.settings.hideAmount });
       render(); return;
     }
-    if (a === 'home-view') { homeView = el.dataset.view || 'cash'; render(); return; }
     if (a === 'record') { openCashSheet(board); return; }
     if (a === 'edit-note') { openNoteSheet(el.dataset.kind, board, id); return; }
     if (a === 'add-cash-board') { openCashSheet(board); return; }
@@ -1079,8 +999,6 @@
     if (a === 'add-cash') { openCashSheet(null); return; }
     if (a === 'refresh' || a === 'refresh-invest') { refreshAll(true); return; }
     if (a === 'transfer') { openTransferSheet(); return; }
-    if (a === 'toggle-fold') { foldState[board] = !foldState[board]; render(); return; }
-    if (a === 'toggle-sub') { const k = board + ':' + el.dataset.sub; subOpen[k] = subOpen[k] !== true; render(); return; }
     if (a === 'add-holding') { openHoldingSheet(null, null); return; }
     if (a === 'add-gold') { openGoldSheet(null, null); return; }
     if (a === 'add-gold-board') { openGoldSheet(board, null); return; }
@@ -1092,12 +1010,12 @@
     }
     if (a === 'delete-invest') {
       UI.confirm({ title: '删除持仓', message: '确认删除该持仓？删除后相关交易记录仍保留。', okText: '删除' }).then(ok => {
-        if (ok) { Store.deleteHolding(board, id); expandedHoldings.delete(id); render(); }
+        if (ok) { Store.deleteHolding(board, id); expandedItems.delete(id); render(); }
       }); return;
     }
     if (a === 'delete-cash') {
       UI.confirm({ title: '删除记录', message: '确认删除该条收支记录？', okText: '删除' }).then(ok => {
-        if (ok) { Store.deleteCash(board, id); render(); }
+        if (ok) { Store.deleteCash(board, id); expandedItems.delete(id); render(); }
       }); return;
     }
     if (a === 'delete-trade') {
@@ -1105,7 +1023,18 @@
         if (ok) { Store.deleteTrade(id); render(); }
       }); return;
     }
-    if (a === 'expand') { if (expandedHoldings.has(id)) expandedHoldings.delete(id); else expandedHoldings.add(id); render(); return; }
+    /* 明细行点击展开/收起：点一下才显示 备注/买入/卖出/定投/编辑/隐藏 等操作 */
+    if (a === 'expand-item') { if (expandedItems.has(id)) expandedItems.delete(id); else expandedItems.add(id); render(); return; }
+    /* 隐藏明细：数字遮罩 + 不计入总额 */
+    if (a === 'toggle-hidden') {
+      const kind = el.dataset.kind;
+      const b = Store.state.boards[board]; if (!b) return;
+      const item = kind === 'cash' ? b.cash.find(x => x.id === id) : b.invest.find(x => x.id === id);
+      if (!item) return;
+      if (kind === 'cash') Store.updateCash(board, id, { hidden: !item.hidden });
+      else Store.updateHolding(board, id, { hidden: !item.hidden });
+      render(); return;
+    }
     if (a === 'trade') {
       const h = Store.state.boards[board].invest.find(x => x.id === id);
       openTradeSheet({ board: board, code: h ? h.code : '', action: el.dataset.dir || 'buy' }); return;
@@ -1156,7 +1085,7 @@
     if (a === 'import') { importData(); return; }
     if (a === 'reset') {
       UI.confirm({ title: '清空全部数据', message: '将删除所有资产、交易与快照，且不可恢复。建议先导出备份。', okText: '清空' }).then(ok => {
-        if (ok) { Store.resetAll(); expandedHoldings.clear(); render(); UI.toast('已清空'); }
+        if (ok) { Store.resetAll(); expandedItems.clear(); render(); UI.toast('已清空'); }
       }); return;
     }
   }
@@ -1223,7 +1152,7 @@
           UI.confirm({ title: '导入备份', message: '将覆盖当前全部数据，确认导入？', okText: '导入' }).then(ok => {
             if (ok) {
               Store.replaceState(parsed);
-              expandedHoldings.clear();
+              expandedItems.clear();
               render();
               UI.toast('导入成功');
             }
@@ -1299,8 +1228,8 @@
     document.querySelectorAll('.tabbar button').forEach(b => {
       b.addEventListener('click', () => {
         currentTab = b.dataset.tab;
-        // 进入投资页自动刷新：5 分钟内刚刷过就不重复请求
-        if (currentTab === 'invest' && Store.state.settings.autoRefreshInvest) {
+        // 进入首页自动刷新：5 分钟内刚刷过就不重复请求
+        if (currentTab === 'home' && Store.state.settings.autoRefreshInvest) {
           const last = (Store.state.lastRefresh && Store.state.lastRefresh.time) || 0;
           if (Date.now() - last > 5 * 60 * 1000) refreshAll(false);
         }

@@ -112,7 +112,7 @@ body {
 /* 板块卡片 */
 .board-card { background: var(--card); border-radius: 14px; margin-top: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .board-head {
-  display: flex; align-items: center; gap: 10px; padding: 14px 14px; cursor: pointer;
+  display: flex; align-items: center; gap: 10px; padding: 14px 14px;
 }
 .bh-left { flex: 1; }
 .board-name { font-size: 15px; font-weight: 600; }
@@ -175,6 +175,9 @@ body {
   border: 1px dashed var(--brand); background: #eaf2ff; color: var(--brand-d);
   font-size: 13px; font-weight: 600; cursor: pointer;
 }
+.sub-add.gold { border-color: #d4a017; background: #fff8e6; color: #9a6a00; }
+.sub-add-row { display: flex; gap: 8px; margin-top: 10px; }
+.sub-add-row .sub-add { margin-top: 0; flex: 1; }
 /* 投资区操作按钮：定投/卖出/金/＋ 同一行、等宽对齐 */
 .inv-actions { display: flex; gap: 8px; margin: 8px 0 2px; }
 .inv-act {
@@ -270,13 +273,26 @@ body {
 .dca-btn-sub { font-weight: 400; font-size: 11px; opacity: .85; }
 .btn-mini.loading { opacity: .6; }
 
-.hold-row {
-  display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line);
-  border-radius: 10px; padding: 12px 10px; margin-top: 8px; position: relative; cursor: pointer;
+/* 明细行（现金/投资通用）：默认收起，点击展开操作 */
+.item, .cash-row, .hold-row {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+  margin-top: 8px; overflow: hidden;
 }
-.hold-main { flex: 1; min-width: 0; }
-.hold-right { text-align: right; }
-.expand-ico { color: var(--muted); font-size: 12px; }
+.item-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 12px; cursor: pointer;
+}
+.item-head:active { background: #f5f7fa; }
+.item .li-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.item .li-right { flex: 0 0 auto; text-align: right; display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+.item-detail { padding: 0 12px 12px; }
+.item-detail .hd-pline { margin-top: 0; border-radius: 10px; }
+.item-detail .hd-grid, .item-detail .hd-returns { margin-left: 0; margin-right: 0; }
+.item-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.item-actions .btn-mini { flex: 1 1 auto; text-align: center; padding: 8px 4px; min-width: 60px; }
+/* 隐藏态：数字不可见 + 视觉弱化 */
+.is-hidden { opacity: .55; }
+.is-hidden .item-head { font-style: italic; }
+.is-hidden .li-amount { color: var(--muted); }
 .hold-detail { background: #fafbfc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; padding: 12px; margin-top: -2px; }
 .hd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 13px; }
 .hd-grid > div { display: flex; flex-direction: column; }

@@ -80,6 +80,7 @@
       type: item.type === 'expense' ? 'expense' : 'income',
       amount: Math.abs(Number(item.amount) || 0),
       note: (item.note || '').toString().slice(0, 60),
+      hidden: false,                 // 隐藏：数字不可见且不计总额
       time: item.time || Date.now(),
     };
     b.cash.unshift(rec);
@@ -92,6 +93,7 @@
     if (patch.amount !== undefined) c.amount = Math.abs(Number(patch.amount) || 0);
     if (patch.type !== undefined) c.type = patch.type === 'expense' ? 'expense' : 'income';
     if (patch.note !== undefined) c.note = patch.note.toString().slice(0, 60);
+    if (patch.hidden !== undefined) c.hidden = !!patch.hidden;
     if (patch.time !== undefined) c.time = patch.time;
     save();
   }
@@ -114,6 +116,7 @@
       lastNav: 0, prevNav: 0, todayChangePct: 0,
       marketValue: 0, todayProfit: 0, totalProfit: 0,
       navHistory: [], note: (h.note || '').toString().slice(0, 200),
+      hidden: false,                 // 隐藏：数字不可见且不计总额
     };
     b.invest.push(rec);
     save();
@@ -124,6 +127,7 @@
     const h = b.invest.find(x => x.id === id); if (!h) return;
     Object.assign(h, patch);
     if (patch.note !== undefined) h.note = patch.note.toString().slice(0, 200);
+    if (patch.hidden !== undefined) h.hidden = !!patch.hidden;
     save();
   }
   function deleteHolding(boardKey, id) {
@@ -211,27 +215,27 @@
   /* ---------------- 计算规则 ---------------- */
   function cashTotal(boardKey) {
     const b = state.boards[boardKey]; if (!b) return 0;
-    return b.cash.reduce((s, c) => s + (c.type === 'expense' ? -c.amount : c.amount), 0);
+    return b.cash.reduce((s, c) => s + (c.hidden ? 0 : (c.type === 'expense' ? -c.amount : c.amount)), 0);
   }
   function investTotal(boardKey) {
     const b = state.boards[boardKey]; if (!b) return 0;
-    return b.invest.reduce((s, h) => s + (h.marketValue || 0), 0);
+    return b.invest.reduce((s, h) => s + (h.hidden ? 0 : (h.marketValue || 0)), 0);
   }
   function boardTotal(boardKey) { return cashTotal(boardKey) + investTotal(boardKey); }
   function boardInvestTodayProfit(boardKey) {
     const b = state.boards[boardKey]; if (!b) return 0;
-    return b.invest.reduce((s, h) => s + (h.todayProfit || 0), 0);
+    return b.invest.reduce((s, h) => s + (h.hidden ? 0 : (h.todayProfit || 0)), 0);
   }
   function boardInvestTotalProfit(boardKey) {
     const b = state.boards[boardKey]; if (!b) return 0;
-    return b.invest.reduce((s, h) => s + (h.totalProfit || 0), 0);
+    return b.invest.reduce((s, h) => s + (h.hidden ? 0 : (h.totalProfit || 0)), 0);
   }
   function globalTotals() {
     let mv = 0, today = 0, total = 0, cash = 0;
     BOARD_DEFS.forEach(b => {
       mv += investTotal(b.key);
       cash += cashTotal(b.key);
-      state.boards[b.key].invest.forEach(h => { today += h.todayProfit || 0; total += h.totalProfit || 0; });
+      state.boards[b.key].invest.forEach(h => { if (!h.hidden) { today += h.todayProfit || 0; total += h.totalProfit || 0; } });
     });
     return { marketValue: mv, cash, todayProfit: today, totalProfit: total, grandTotal: mv + cash };
   }
