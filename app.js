@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-5';
+  const APP_VERSION = '2026-08-01-6';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -1382,6 +1382,7 @@
     const desc = document.getElementById('auth-desc');
     const passEl = document.getElementById('auth-pass');
     const errEl = document.getElementById('auth-err');
+    const skipEl = document.getElementById('auth-skip');
     title.textContent = setup ? '设置访问口令' : '输入访问口令';
     desc.textContent = setup
       ? '首次使用请设置一个口令（至少 4 位）；之后所有设备用同一口令登录，即可共享同一账本。'
@@ -1391,6 +1392,16 @@
     screen.classList.remove('hidden');
 
     return new Promise((resolve) => {
+      // 逃生通道：纯静态托管时被误判为「有后端」也不要卡死用户，点此直接用本地账本。
+      const skip = () => {
+        Remote.setEnabled(false);
+        Remote.setToken('');
+        screen.classList.add('hidden');
+        document.removeEventListener('keydown', onKey);
+        if (btn) btn.removeEventListener('click', submit);
+        if (skipEl) skipEl.removeEventListener('click', skip);
+        resolve(false);
+      };
       const submit = async () => {
         const pass = passEl.value.trim();
         if (pass.length < 4) { errEl.textContent = '口令至少 4 位'; return; }
@@ -1404,6 +1415,7 @@
           screen.classList.add('hidden');
           document.removeEventListener('keydown', onKey);
           btn.removeEventListener('click', submit);
+          if (skipEl) skipEl.removeEventListener('click', skip);
           resolve(true);
         } catch (e) {
           Remote.setSuppress(false);
@@ -1413,6 +1425,7 @@
       const onKey = (e) => { if (e.key === 'Enter') submit(); };
       const btn = document.getElementById('auth-submit');
       btn.addEventListener('click', submit);
+      if (skipEl) skipEl.addEventListener('click', skip);
       document.addEventListener('keydown', onKey);
     });
   }

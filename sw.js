@@ -5,7 +5,7 @@
  * 现在改为：代码文件一律先走网络（拿到就更新缓存），断网时才回落到缓存。
  * 每次发版只需改下面的 VERSION，旧缓存会被自动清空。
  */
-const VERSION = '2026-08-01-5';
+const VERSION = '2026-08-01-6';
 const CACHE = 'ffa-' + VERSION;
 const SHELL = [
   './',
@@ -51,6 +51,17 @@ self.addEventListener('fetch', (e) => {
   if (url.hostname.indexOf('1234567.com.cn') !== -1 || url.hostname.indexOf('eastmoney') !== -1) return;
   // 跨域资源不接管
   if (url.origin !== self.location.origin) return;
+
+  // API 请求（/api/*）一律只走网络，且失败时返回 JSON 404，
+  // 绝不兜底返回 index.html —— 否则前端会把「首页 HTML」误判成「存在后端」而弹出设口令。
+  if (url.pathname.indexOf('/api/') === 0) {
+    e.respondWith(
+      fetch(req).catch(() => new Response('{"code":404,"msg":"no backend"}', {
+        status: 404, headers: { 'content-type': 'application/json' },
+      }))
+    );
+    return;
+  }
 
   // 网络优先：拿到新内容就顺手更新缓存；断网才用缓存
   e.respondWith(

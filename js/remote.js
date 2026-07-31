@@ -31,8 +31,19 @@
   }
 
   async function ping() {
-    try { const r = await fetch(base + '/api/ping', { method: 'GET' }); return r.ok; }
-    catch (e) { return false; }
+    try {
+      const r = await fetch(base + '/api/ping', { method: 'GET' });
+      // 仅当返回 JSON 且成功，才认定「存在后端」。
+      // 静态托管（GitHub Pages 等）对 /api/ping 返回的是 HTML 404 页，
+      // Service Worker 在网络失败兜底时也会返回 index.html（同样为 HTML），
+      // 这些都不是后端，必须排除，否则会被误判为「有后端」而弹出设口令。
+      if (!r.ok) return false;
+      const ct = r.headers.get('content-type') || '';
+      if (ct.indexOf('application/json') === -1) return false;
+      let j = null;
+      try { j = await r.json(); } catch (e) { return false; }
+      return !!(j && (j.code === 200 || j.ok === true || j.msg === 'ok'));
+    } catch (e) { return false; }
   }
   async function setup(pass) {
     const { j } = await req('POST', '/api/auth/setup', { passcode: pass });
