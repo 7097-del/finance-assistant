@@ -63,26 +63,41 @@
     });
   }
 
-  /* 底部弹出表单：opts.fields = [{key,label,type,options,placeholder,value}] */
+  /* 底部弹出表单
+   * opts.fields = [{key,label,type,options,placeholder,value,hint}]
+   *   type 支持：text / number / select / segmented / textarea / note(纯提示行)
+   * opts.onInput(values, api) —— 任意字段变化时回调，用于字段联动
+   *   api.set(key, val)      写入某字段的值
+   *   api.hint(key, text)    更新某字段下方的灰色提示
+   *   api.show(key, visible)  显示/隐藏某字段
+   *   api.readonly(key, on)   置灰只读
+   */
   function sheet(opts) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.className = 'overlay sheet-overlay';
       const fieldsHtml = (opts.fields || []).map(f => {
+        const hint = '<span class="field-hint" data-hint="' + f.key + '">' + (f.hint || '') + '</span>';
+        const wrapOpen = '<label class="field" data-field="' + f.key + '"><span>' + f.label + '</span>';
+        if (f.type === 'note') {
+          return '<div class="field field-note" data-field="' + f.key + '"><span class="field-hint" data-hint="' + f.key + '">' + (f.value || '') + '</span></div>';
+        }
         if (f.type === 'select') {
           const os = (f.options || []).map(o =>
             '<option value="' + o.value + '"' + (f.value === o.value ? ' selected' : '') + '>' + o.label + '</option>').join('');
-          return '<label class="field"><span>' + f.label + '</span><select data-key="' + f.key + '">' + os + '</select></label>';
+          return wrapOpen + '<select data-key="' + f.key + '">' + os + '</select>' + hint + '</label>';
         }
         if (f.type === 'segmented') {
           const os = (f.options || []).map(o =>
             '<button type="button" class="seg-btn' + (f.value === o.value ? ' active' : '') + '" data-val="' + o.value + '">' + o.label + '</button>').join('');
-          return '<label class="field"><span>' + f.label + '</span><div class="seg" data-seg="' + f.key + '">' + os + '<input type="hidden" data-key="' + f.key + '" value="' + (f.value || '') + '"></div></label>';
+          return wrapOpen + '<div class="seg" data-seg="' + f.key + '">' + os + '<input type="hidden" data-key="' + f.key + '" value="' + (f.value || '') + '"></div>' + hint + '</label>';
         }
         if (f.type === 'textarea') {
-          return '<label class="field"><span>' + f.label + '</span><textarea data-key="' + f.key + '" placeholder="' + (f.placeholder || '') + '" rows="2">' + (f.value || '') + '</textarea></label>';
+          return wrapOpen + '<textarea data-key="' + f.key + '" placeholder="' + (f.placeholder || '') + '" rows="2">' + (f.value || '') + '</textarea>' + hint + '</label>';
         }
-        return '<label class="field"><span>' + f.label + '</span><input data-key="' + f.key + '" type="' + (f.type || 'text') + '" value="' + (f.value || '') + '" placeholder="' + (f.placeholder || '') + '"></label>';
+        const inputMode = f.type === 'number' ? ' inputmode="decimal"' : '';
+        return wrapOpen + '<input data-key="' + f.key + '" type="' + (f.type || 'text') + '"' + inputMode +
+          ' value="' + (f.value || '') + '" placeholder="' + (f.placeholder || '') + '">' + hint + '</label>';
       }).join('');
       overlay.innerHTML =
         '<div class="sheet">' +
@@ -91,6 +106,38 @@
         '<div class="sheet-footer"><button class="btn-primary block" data-act="submit">' + (opts.submitText || '保存') + '</button></div>' +
         '</div>';
       document.body.appendChild(overlay);
+
+      const collect = () => {
+        const values = {};
+        overlay.querySelectorAll('[data-key]').forEach(el => { values[el.dataset.key] = el.value; });
+        return values;
+      };
+      const api = {
+        set(key, val) {
+          const el = overlay.querySelector('[data-key="' + key + '"]');
+          if (el && el.value !== String(val)) el.value = val;
+        },
+        get(key) {
+          const el = overlay.querySelector('[data-key="' + key + '"]');
+          return el ? el.value : '';
+        },
+        hint(key, text) {
+          const el = overlay.querySelector('[data-hint="' + key + '"]');
+          if (el) el.textContent = text || '';
+        },
+        show(key, visible) {
+          const el = overlay.querySelector('[data-field="' + key + '"]');
+          if (el) el.style.display = visible ? '' : 'none';
+        },
+        readonly(key, on) {
+          const el = overlay.querySelector('[data-key="' + key + '"]');
+          if (!el) return;
+          el.readOnly = !!on;
+          el.classList.toggle('is-readonly', !!on);
+        },
+      };
+      const fire = () => { if (opts.onInput) { try { opts.onInput(collect(), api); } catch (e) {} } };
+
       // 分段选择器：点击切换 active 并写入隐藏 input
       overlay.querySelectorAll('.seg').forEach(seg => {
         const hidden = seg.querySelector('input[type="hidden"]');
@@ -99,14 +146,20 @@
             seg.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             if (hidden) hidden.value = btn.dataset.val;
+            fire();
           });
         });
       });
+      overlay.querySelectorAll('input,select,textarea').forEach(el => {
+        el.addEventListener('input', fire);
+        el.addEventListener('change', fire);
+      });
+      fire(); // 初始化一次联动
+
       const close = () => { if (overlay.parentNode) document.body.removeChild(overlay); resolve(null); };
       overlay.querySelector('[data-act="close"]').onclick = close;
       overlay.querySelector('[data-act="submit"]').onclick = async () => {
-        const values = {};
-        overlay.querySelectorAll('[data-key]').forEach(el => { values[el.dataset.key] = el.value; });
+        const values = collect();
         try {
           const r = opts.onSubmit ? await opts.onSubmit(values) : values;
           if (overlay.parentNode) document.body.removeChild(overlay);

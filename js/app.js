@@ -2,6 +2,8 @@
 (function () {
   'use strict';
 
+  const APP_VERSION = '2026-07-30-3';
+
   const TABS = [
     { key: 'home', label: '首页' },
     { key: 'invest', label: '投资专区' },
@@ -77,54 +79,105 @@
   function boardName(key) { const d = Store.BOARD_DEFS.find(b => b.key === key); return d ? d.name : key; }
 
   /* ---------------- 净值刷新 ---------------- */
-  async function getQuote(code) {
-    if (window.Remote && Remote.isEnabled()) return await Remote.quote(code);
-    return await FundAPI.getEstimate(code);
+  /* 兼容后端返回的旧字段结构 */
+  function adaptQuote(d) {
+    if (!d) return null;
+    if (d.nav !== undefined) return d;                 // 已是新结构
+    const nav = Number(d.dwjz) || 0;
+    return {
+      code: d.code || '', name: d.name || '',
+      nav: nav, navDate: d.jzrq || '', navChangePct: 0, prevNav: nav,
+      gsz: Number(d.gsz) || 0, gszzl: Number(d.gszzl) || 0, gztime: d.gztime || '',
+      hasEstimate: (Number(d.gsz) || 0) > 0,
+    };
   }
+
+  async function fetchQuotes(codes) {
+    if (window.Remote && Remote.isEnabled()) {
+      const map = {};
+      for (const c of codes) {
+        try { map[c] = adaptQuote(await Remote.quote(c)); } catch (e) { /* 单只失败忽略 */ }
+      }
+      return map;
+    }
+    return await FundAPI.getBatch(codes);
+  }
+
   async function refreshAll(showToast) {
     if (refreshing) return;
     const holdings = Store.allHoldings();
     if (holdings.length === 0) { if (showToast) UI.toast('暂无持仓可刷新'); return; }
     refreshing = true;
     setRefreshingUI(true);
-    let ok = 0, fail = 0;
+    if (showToast) UI.toast('正在获取最新净值…');
+
     const trading = FundAPI.isTradingTime();
-    for (const h of holdings) {
-      try {
-        const d = await getQuote(h.code);
-        const latestNav = trading ? d.gsz : d.dwjz;
-        const prevNav = d.dwjz;
-        const todayChangePct = trading ? d.gszzl : 0;
-        const marketValue = h.shares * latestNav;
-        const todayProfit = (latestNav - prevNav) * h.shares;
-        const totalProfit = (latestNav - h.avgCost) * h.shares;
+    const codes = [];
+    holdings.forEach(h => { if (h.code && codes.indexOf(h.code) === -1) codes.push(h.code); });
+
+    let map = {}, netError = null;
+    try {
+      // 兜底超时：任何情况下都不能让刷新状态卡死，否则之后再也点不动刷新
+      map = await Promise.race([
+        fetchQuotes(codes),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('网络超时，请稍后重试')), 20000)),
+      ]);
+    } catch (e) { netError = e; }
+
+    let ok = 0, fail = 0;
+    let navDate = '';
+    if (!netError) {
+      for (const h of holdings) {
+        const d = map[h.code];
+        if (!d || !d.nav) { fail++; continue; }
+        // 交易时段且有盘中估值 → 用估值；否则用官方已公布净值
+        const useEst = trading && d.hasEstimate;
+        const latestNav = useEst ? d.gsz : d.nav;
+        const prevNav = useEst ? d.nav : d.prevNav;
+        const todayChangePct = useEst ? d.gszzl : d.navChangePct;
         Store.updateHolding(h.boardKey, h.id, {
           name: d.name || h.name,
-          lastNav: latestNav, prevNav: prevNav, todayChangePct: todayChangePct,
-          marketValue: marketValue, todayProfit: todayProfit, totalProfit: totalProfit,
+          lastNav: latestNav,
+          prevNav: prevNav,
+          navDate: d.navDate || '',
+          todayChangePct: todayChangePct,
+          marketValue: h.shares * latestNav,
+          todayProfit: (latestNav - prevNav) * h.shares,
+          totalProfit: (latestNav - h.avgCost) * h.shares,
           navHistory: pushNav(h.navHistory, { t: Date.now(), nav: latestNav }),
         });
+        if (!navDate) navDate = d.navDate || '';
         ok++;
-      } catch (e) { fail++; console.warn('刷新失败', h.code, e); }
+      }
+      const g = Store.globalTotals();
+      Store.addSnapshot({
+        time: Date.now(),
+        trading: trading,
+        navDate: navDate,
+        totalMarketValue: g.marketValue,
+        todayProfit: g.todayProfit,
+        boards: Store.BOARD_DEFS.map(b => ({ key: b.key, name: b.name, total: Store.boardTotal(b.key) })),
+        items: Store.allHoldings().map(h => ({
+          code: h.code, name: h.name, nav: h.lastNav, marketValue: h.marketValue, changePct: h.todayChangePct,
+        })),
+      });
+      Store.setLastRefresh({ time: Date.now(), ok: ok, fail: fail, trading: trading, navDate: navDate });
     }
-    const g = Store.globalTotals();
-    Store.addSnapshot({
-      time: Date.now(),
-      trading: trading,
-      totalMarketValue: g.marketValue,
-      todayProfit: g.todayProfit,
-      boards: Store.BOARD_DEFS.map(b => ({ key: b.key, name: b.name, total: Store.boardTotal(b.key) })),
-      items: Store.allHoldings().map(h => ({
-        code: h.code, name: h.name, nav: h.lastNav, marketValue: h.marketValue, changePct: h.todayChangePct,
-      })),
-    });
+
     refreshing = false;
     setRefreshingUI(false);
     render();
-    if (showToast) UI.toast(fail === 0 ? ('刷新完成，' + ok + ' 只基金已更新') : ('刷新完成：' + ok + ' 成功，' + fail + ' 失败'));
+    if (!showToast) return;
+    if (netError) { UI.toast('刷新失败：' + (netError.message || '网络异常，请检查网络')); return; }
+    if (ok === 0) { UI.toast('未获取到净值，请检查基金代码是否正确'); return; }
+    const src = (trading ? '盘中估值' : '官方净值' + (navDate ? '（' + navDate + '）' : ''));
+    UI.toast(fail === 0
+      ? ('已更新 ' + ok + ' 只 · ' + src)
+      : ('更新 ' + ok + ' 只，' + fail + ' 只失败 · ' + src));
   }
+
   function setRefreshingUI(on) {
-    document.querySelectorAll('[data-action="refresh"], [data-action="refresh-invest"]').forEach(b => {
+    document.querySelectorAll('[data-action="refresh"], [data-action="refresh-invest"], #refresh-btn').forEach(b => {
       b.classList.toggle('loading', on);
       b.disabled = on;
     });
@@ -183,29 +236,62 @@
     }).then(() => render());
   }
 
+  /* 持仓录入：份额 / 总金额 / 平均成本 三者联动
+   * 按份额：填「份额 + 平均成本」→ 自动算总金额
+   * 按金额：填「总金额 + 平均成本」→ 自动算份额
+   */
   function openHoldingSheet(presetBoard, edit) {
     const h = edit || {};
+    const initShares = Number(h.shares) || 0;
+    const initCost = Number(h.avgCost) || 0;
+    const initAmount = initShares > 0 && initCost > 0 ? (initShares * initCost) : 0;
     UI.sheet({
       title: edit ? '编辑持仓' : '新增投资持仓',
       fields: [
         { key: 'board', label: '归属板块', type: 'select', value: presetBoard || h.boardKey || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
         { key: 'code', label: '6位基金代码', type: 'text', value: h.code || '', placeholder: '如 110011' },
         { key: 'name', label: '基金名称', type: 'text', value: h.name && h.name !== '未命名基金' ? h.name : '', placeholder: '可选，刷新时自动获取' },
-        { key: 'shares', label: '持仓份额', type: 'number', value: h.shares || '', placeholder: '0.00' },
-        { key: 'avgCost', label: '平均成本（元）', type: 'number', value: h.avgCost || '', placeholder: '0.00' },
+        {
+          key: 'mode', label: '录入方式', type: 'segmented', value: 'shares',
+          options: [{ value: 'shares', label: '按份额' }, { value: 'amount', label: '按总金额' }],
+        },
+        { key: 'avgCost', label: '平均成本（元/份）', type: 'number', value: initCost || '', placeholder: '0.0000' },
+        { key: 'shares', label: '持仓份额', type: 'number', value: initShares || '', placeholder: '0.00' },
+        { key: 'amount', label: '总金额（元）', type: 'number', value: initAmount ? initAmount.toFixed(2) : '', placeholder: '0.00' },
       ],
+      onInput: (v, api) => {
+        const cost = Number(v.avgCost) || 0;
+        if (v.mode === 'amount') {
+          api.readonly('shares', true); api.readonly('amount', false);
+          const amt = Number(v.amount) || 0;
+          const sh = cost > 0 ? amt / cost : 0;
+          api.set('shares', sh > 0 ? sh.toFixed(2) : '');
+          api.hint('shares', cost > 0 ? '由总金额 ÷ 平均成本自动算出' : '请先填写平均成本');
+          api.hint('amount', '');
+        } else {
+          api.readonly('shares', false); api.readonly('amount', true);
+          const sh = Number(v.shares) || 0;
+          const amt = sh * cost;
+          api.set('amount', amt > 0 ? amt.toFixed(2) : '');
+          api.hint('amount', cost > 0 ? '由份额 × 平均成本自动算出' : '请先填写平均成本');
+          api.hint('shares', '');
+        }
+      },
       submitText: '保存',
       onSubmit: (v) => {
         if (!/^\d{6}$/.test((v.code || '').trim())) throw new Error('请输入6位基金代码');
-        if (!v.shares || Number(v.shares) <= 0) throw new Error('请输入有效份额');
-        if (edit) {
-          Store.updateHolding(h.boardKey, h.id, {
-            code: v.code.trim(), name: v.name.trim() || '未命名基金',
-            shares: Number(v.shares), avgCost: Number(v.avgCost) || 0,
-          });
-        } else {
-          Store.addHolding(v.board, { code: v.code.trim(), name: v.name.trim(), shares: Number(v.shares), avgCost: Number(v.avgCost) || 0 });
+        const cost = Number(v.avgCost) || 0;
+        let shares = Number(v.shares) || 0;
+        if (v.mode === 'amount') {
+          const amt = Number(v.amount) || 0;
+          if (amt <= 0) throw new Error('请输入有效总金额');
+          if (cost <= 0) throw new Error('按总金额录入时必须填写平均成本');
+          shares = amt / cost;
         }
+        if (shares <= 0) throw new Error('请输入有效份额');
+        const patch = { code: v.code.trim(), name: (v.name || '').trim() || '未命名基金', shares: shares, avgCost: cost };
+        if (edit) Store.updateHolding(h.boardKey, h.id, patch);
+        else Store.addHolding(v.board, patch);
       },
     }).then(() => render());
   }
@@ -217,6 +303,7 @@
       key: 'dca', label: '类型', type: 'segmented', value: preset.dca ? 'yes' : 'no',
       options: [{ value: 'no', label: '普通买入' }, { value: 'yes', label: '定投' }],
     }];
+    const initMode = preset.mode === 'amount' ? 'amount' : 'shares';
     UI.sheet({
       title: isSell ? '卖出登记' : (preset.dca ? '定投登记' : '买入登记'),
       fields: [
@@ -224,16 +311,50 @@
         { key: 'code', label: '基金代码', type: 'text', value: preset.code || '', placeholder: '如 110011' },
         { key: 'action', label: '方向', type: 'select', value: preset.action || 'buy', options: [{ value: 'buy', label: '买入' }, { value: 'sell', label: '卖出' }] },
         ...dcaField,
+        {
+          key: 'mode', label: '录入方式', type: 'segmented', value: initMode,
+          options: [{ value: 'shares', label: '按份额' }, { value: 'amount', label: '按金额' }],
+        },
+        { key: 'price', label: '成交净值', type: 'number', value: preset.price || '', placeholder: '0.0000' },
         { key: 'shares', label: '交易份额', type: 'number', value: preset.shares || '', placeholder: '0.00' },
-        { key: 'price', label: '成交净值', type: 'number', value: preset.price || '', placeholder: '0.00' },
+        { key: 'amount', label: '交易金额（元）', type: 'number', value: preset.amount || '', placeholder: '0.00' },
         { key: 'note', label: '备注', type: 'text', value: preset.note || '', placeholder: '可选' },
       ],
+      onInput: (v, api) => {
+        const price = Number(v.price) || 0;
+        if (v.mode === 'amount') {
+          api.readonly('shares', true); api.readonly('amount', false);
+          const amt = Number(v.amount) || 0;
+          const sh = price > 0 ? amt / price : 0;
+          api.set('shares', sh > 0 ? sh.toFixed(2) : '');
+          api.hint('shares', price > 0 ? '由金额 ÷ 成交净值自动算出' : '请先填写成交净值');
+          api.hint('amount', '');
+        } else {
+          api.readonly('shares', false); api.readonly('amount', true);
+          const sh = Number(v.shares) || 0;
+          const amt = sh * price;
+          api.set('amount', amt > 0 ? amt.toFixed(2) : '');
+          api.hint('amount', price > 0 ? '由份额 × 成交净值自动算出' : '请先填写成交净值');
+          api.hint('shares', '');
+        }
+      },
       submitText: '登记',
       onSubmit: (v) => {
         if (!/^\d{6}$/.test((v.code || '').trim())) throw new Error('请输入6位基金代码');
-        if (!v.shares || Number(v.shares) <= 0) throw new Error('请输入有效份额');
-        if (!v.price || Number(v.price) <= 0) throw new Error('请输入有效成交净值');
-        Store.addTrade({ board: v.board, code: v.code.trim(), action: v.action, shares: Number(v.shares), price: Number(v.price), note: v.note, dca: v.action === 'buy' && v.dca === 'yes' });
+        const price = Number(v.price) || 0;
+        if (price <= 0) throw new Error('请输入有效成交净值');
+        let shares = Number(v.shares) || 0;
+        if (v.mode === 'amount') {
+          const amt = Number(v.amount) || 0;
+          if (amt <= 0) throw new Error('请输入有效交易金额');
+          shares = amt / price;
+        }
+        if (shares <= 0) throw new Error('请输入有效份额');
+        Store.addTrade({
+          board: v.board, code: v.code.trim(), action: v.action,
+          shares: shares, price: price, note: v.note,
+          dca: v.action === 'buy' && v.dca === 'yes',
+        });
       },
     }).then(() => render());
   }
@@ -251,6 +372,32 @@
         if (h) openTradeSheet({ board: boardKey, code: h.code, action: 'sell' });
         return true;
       }
+    });
+  }
+
+  /* 板块级入口：先选一只持仓，再为它建定投计划 */
+  function openDcaPlanPicker(boardKey) {
+    const list = Store.state.boards[boardKey] ? Store.state.boards[boardKey].invest : [];
+    if (!list || list.length === 0) {
+      UI.toast('该板块暂无持仓，请先添加基金');
+      return;
+    }
+    const opts = list.map(h => {
+      const p = findPlan(boardKey, h.code);
+      return { value: h.id, label: h.name + ' (' + h.code + ')' + (p ? ' · 已有计划' : '') };
+    });
+    UI.sheet({
+      title: '选择要定投的基金',
+      fields: [{ key: 'id', label: '基金', type: 'select', value: opts[0].value, options: opts }],
+      submitText: '下一步',
+      onSubmit: (v) => {
+        const h = list.find(x => x.id === v.id);
+        if (!h) return true;
+        const exist = findPlan(boardKey, h.code);
+        if (exist) openDcaPlanSheet(exist);
+        else openDcaPlanSheet(null, { board: boardKey, code: h.code, name: h.name, price: h.lastNav || 0 });
+        return true;
+      },
     });
   }
 
@@ -274,41 +421,83 @@
     }).then(() => render());
   }
 
-  function openDcaPlanSheet(edit) {
-    const p = edit || {};
+  function paramHint(freq) {
+    if (freq === 'weekly') return '每周几（1=周一 … 7=周日）';
+    if (freq === 'interval') return '间隔天数，如 14 表示每两周';
+    return '每月几号（1-28）';
+  }
+
+  /* 定投计划：可按「固定金额」或「固定份额」定投 */
+  function openDcaPlanSheet(edit, preset) {
+    const p = edit || preset || {};
     const freq = p.freq || 'monthly';
-    const param = (p.param != null) ? p.param : 1;
-    const hint = freq === 'weekly' ? '1=周一…7=周日' : (freq === 'interval' ? '间隔天数' : '每月几号(1-28)');
+    const param = (p.param != null && p.param !== '') ? p.param : 1;
+    const mode = p.mode === 'shares' ? 'shares' : 'amount';   // 默认按金额，符合多数人的定投习惯
     UI.sheet({
-      title: edit ? '编辑定投计划' : '新增定投计划',
+      title: edit ? '编辑定投计划' : '新建定投计划',
       fields: [
         { key: 'board', label: '归属板块', type: 'select', value: p.board || Store.BOARD_DEFS[0].key, options: Store.BOARD_DEFS.map(b => ({ value: b.key, label: b.name })) },
         { key: 'code', label: '6位基金代码', type: 'text', value: p.code || '', placeholder: '如 110011' },
         { key: 'name', label: '基金名称', type: 'text', value: (p.name && p.name !== '未命名基金') ? p.name : '', placeholder: '可选，刷新时自动获取' },
-        { key: 'freq', label: '频率', type: 'select', value: freq, options: [{ value: 'monthly', label: '每月固定日' }, { value: 'weekly', label: '每周固定日' }, { value: 'interval', label: '每隔N天' }] },
-        { key: 'param', label: '日期参数（' + hint + '）', type: 'number', value: param, placeholder: hint },
-        { key: 'shares', label: '默认定投份额', type: 'number', value: p.shares || '', placeholder: '0.00' },
-        { key: 'price', label: '默认成交净值', type: 'number', value: p.price || '', placeholder: '可选，记录时可改' },
+        { key: 'freq', label: '定投频率', type: 'select', value: freq, options: [{ value: 'monthly', label: '每月固定日' }, { value: 'weekly', label: '每周固定日' }, { value: 'interval', label: '每隔 N 天' }] },
+        { key: 'param', label: '扣款日', type: 'number', value: param, placeholder: paramHint(freq), hint: paramHint(freq) },
+        {
+          key: 'mode', label: '定投方式', type: 'segmented', value: mode,
+          options: [{ value: 'amount', label: '按金额' }, { value: 'shares', label: '按份额' }],
+        },
+        { key: 'amount', label: '每期金额（元）', type: 'number', value: p.amount || '', placeholder: '如 1000' },
+        { key: 'shares', label: '每期份额', type: 'number', value: p.shares || '', placeholder: '如 500' },
+        { key: 'price', label: '参考成交净值', type: 'number', value: p.price || '', placeholder: '可选，记账时可改' },
         { key: 'note', label: '备注', type: 'text', value: p.note || '', placeholder: '可选' },
+        { key: 'tip', label: '', type: 'note', value: '到扣款日后打开 App，首页会弹出提醒，点「记一笔」即可一键入账。' },
       ],
-      submitText: '保存',
+      onInput: (v, api) => {
+        api.hint('param', paramHint(v.freq));
+        const byAmount = v.mode !== 'shares';
+        api.show('amount', byAmount);
+        api.show('shares', !byAmount);
+        api.hint('amount', byAmount ? '每期固定投入这个金额，份额按当日净值自动算' : '');
+        api.hint('shares', byAmount ? '' : '每期固定申购这么多份额');
+      },
+      submitText: '保存计划',
       onSubmit: (v) => {
         if (!/^\d{6}$/.test((v.code || '').trim())) throw new Error('请输入6位基金代码');
+        const byAmount = v.mode !== 'shares';
+        const amount = Math.max(0, Number(v.amount) || 0);
+        const shares = Math.max(0, Number(v.shares) || 0);
+        if (byAmount && amount <= 0) throw new Error('请输入每期定投金额');
+        if (!byAmount && shares <= 0) throw new Error('请输入每期定投份额');
+        let param = Number(v.param) || 1;
+        if (v.freq === 'monthly') param = Math.min(28, Math.max(1, param));
+        if (v.freq === 'weekly') param = Math.min(7, Math.max(1, param));
+        if (v.freq === 'interval') param = Math.max(1, param);
         const plan = {
           board: v.board,
           code: v.code.trim(),
-          name: v.name.trim(),
+          name: (v.name || '').trim(),
           freq: v.freq,
-          param: Number(v.param) || 1,
-          shares: Math.max(0, Number(v.shares) || 0),
+          param: param,
+          mode: byAmount ? 'amount' : 'shares',
+          amount: byAmount ? amount : 0,
+          shares: byAmount ? 0 : shares,
           price: Math.max(0, Number(v.price) || 0),
           note: (v.note || '').slice(0, 60),
           enabled: true,
         };
-        if (edit) { plan.id = p.id; Store.updateDcaPlan(p.id, plan); }
-        else Store.addDcaPlan(plan);
+        if (edit) { plan.id = p.id; Store.updateDcaPlan(p.id, plan); UI.toast('定投计划已更新'); }
+        else { Store.addDcaPlan(plan); UI.toast('定投计划已创建'); }
       },
     }).then(() => render());
+  }
+
+  /* 该基金已有的定投计划（同板块同代码） */
+  function findPlan(boardKey, code) {
+    return (Store.state.dcaPlans || []).find(p => p.board === boardKey && p.code === code);
+  }
+  /* 计划的「每期投入」文案 */
+  function planAmountLabel(p) {
+    if (p.mode === 'shares' || (!p.amount && p.shares)) return '每期 ' + UI.fmtNum(p.shares) + ' 份';
+    return '每期 ' + UI.fmtMoney(p.amount);
   }
 
   function openSnapshotHistory() {
@@ -345,11 +534,30 @@
       '<div class="total-profit">总盈亏 <span class="' + UI.changeClass(g.totalProfit) + '">' + UI.fmtMoney(g.totalProfit) + '</span></div>' +
       '<div class="ring-wrap">' + ring + '</div>' +
       '</div>' +
+      refreshStatusBar() +
       boardsHtml +
       '<div class="quick-bar">' +
       '<button class="quick-btn" data-action="add-cash"><span class="q-ico">✎</span>记一笔</button>' +
       '<button class="quick-btn" data-action="refresh"><span class="q-ico">↻</span>净值更新</button>' +
       '<button class="quick-btn" data-action="transfer"><span class="q-ico">⇄</span>资产调拨</button>' +
+      '</div>';
+  }
+
+  /* 净值刷新状态条：让「什么时候刷的、刷到哪天的净值」一目了然 */
+  function refreshStatusBar() {
+    const r = Store.state.lastRefresh;
+    const hasHolding = Store.allHoldings().length > 0;
+    let text;
+    if (!hasHolding) text = '还没有持仓，添加基金后即可刷新净值';
+    else if (!r || !r.time) text = '尚未刷新过净值，点右侧按钮获取';
+    else {
+      const src = r.trading ? '盘中估值' : ('官方净值' + (r.navDate ? ' ' + r.navDate : ''));
+      text = '上次刷新 ' + UI.fmtTime(r.time) + ' · ' + src +
+        (r.fail ? ' · ' + r.fail + ' 只失败' : '');
+    }
+    return '<div class="refresh-bar">' +
+      '<span class="rb-text">' + text + '</span>' +
+      '<button class="rb-btn" data-action="refresh">↻ 刷新净值</button>' +
       '</div>';
   }
 
@@ -382,7 +590,7 @@
       '<div class="dca-item">' +
       '<div class="dca-i-main">' +
       '<div class="dca-i-name">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
-      '<div class="dca-i-sub">' + boardName(p.board) + ' · 应投 ' + UI.fmtNum(p.shares) + ' 份' + (p.price ? (' @ ' + UI.fmtNum(p.price)) : '') + '</div>' +
+      '<div class="dca-i-sub">' + boardName(p.board) + ' · 应投 ' + planAmountLabel(p).replace('每期 ', '') + '</div>' +
       '</div>' +
       '<button class="dca-rec-btn" data-action="dca-record" data-plan="' + p.id + '">记一笔</button>' +
       '</div>').join('');
@@ -424,8 +632,9 @@
       '<div class="bd-row">' +
       '<span class="bd-label">📈 投资</span>' +
       '<span class="bd-val">' + UI.fmtMoney(investTotal) + '</span>' +
+      '<button class="bd-sell" data-action="dca-plan-board" data-board="' + boardKey + '" title="设置定投计划">定投</button>' +
+      '<button class="bd-sell" data-action="sell-invest-board" data-board="' + boardKey + '" title="卖出基金持仓">卖出</button>' +
       '<button class="bd-add" data-action="add-invest-board" data-board="' + boardKey + '" title="新增基金持仓">＋</button>' +
-      '<button class="bd-sell" data-action="sell-invest-board" data-board="' + boardKey + '" title="卖出基金持仓">卖</button>' +
       '</div>' +
       '</div>';
     return '' +
@@ -469,10 +678,10 @@
       }).join('');
 
     return '' +
+      refreshStatusBar() +
       '<div class="filter-bar">' +
       '<select class="f-select" data-filter="board">' + '<option value="all">全部板块</option>' + boardSelectOptions(investFilter.board) + '</select>' +
       '<input class="f-input" data-filter="kw" placeholder="搜索代码/名称" value="' + (investFilter.kw || '') + '">' +
-      '<button class="btn-mini" data-action="refresh-invest">↻ 刷新</button>' +
       '</div>' +
       '<div class="section-head"><span>全部持仓（' + holdings.length + '）</span><button class="btn-mini primary" data-action="add-holding">+ 添加持仓</button></div>' +
       listHtml +
@@ -482,20 +691,27 @@
 
   function renderHoldingRow(h) {
     const expanded = expandedHoldings.has(h.id);
-    const isDca = Store.state.trades.some(t => t.code === h.code && t.board === h.boardKey && t.dca);
+    const plan = findPlan(h.boardKey, h.code);
+    const isDca = !!plan || Store.state.trades.some(t => t.code === h.code && t.board === h.boardKey && t.dca);
     const w = periodReturn(h.navHistory, 7);
     const m = periodReturn(h.navHistory, 30);
     const q = periodReturn(h.navHistory, 90);
     const y = periodReturn(h.navHistory, 365);
     const rt = v => v === null ? '<span class="muted">—</span>' : '<span class="' + UI.changeClass(v) + '">' + UI.fmtPct(v) + '</span>';
+    const planLine = plan
+      ? '<div class="hd-plan">📅 定投计划：' + freqLabel(plan) + ' · ' + planAmountLabel(plan) +
+        (isDue(plan) ? ' <span class="due-tag">待记</span>' : '') + '</div>'
+      : '';
     const detail = expanded ? '' +
       '<div class="hold-detail">' +
       '<div class="hd-grid">' +
-      '<div><span class="muted">最新净值</span>' + UI.fmtNum(h.lastNav) + '</div>' +
-      '<div><span class="muted">平均成本</span>' + UI.fmtNum(h.avgCost) + '</div>' +
+      '<div><span class="muted">最新净值</span>' + UI.fmtNum(h.lastNav, 4) + (h.navDate ? '<span class="muted">' + h.navDate + '</span>' : '') + '</div>' +
+      '<div><span class="muted">平均成本</span>' + UI.fmtNum(h.avgCost, 4) + '</div>' +
       '<div><span class="muted">持仓份额</span>' + UI.fmtNum(h.shares) + '</div>' +
-      '<div><span class="muted">市值</span>' + UI.fmtMoney(h.marketValue) + '</div>' +
-      '</div>' +
+      '<div><span class="muted">投入本金</span>' + UI.fmtMoney(h.shares * h.avgCost) + '</div>' +
+      '<div><span class="muted">当前市值</span>' + UI.fmtMoney(h.marketValue) + '</div>' +
+      '<div><span class="muted">累计盈亏</span><span class="' + UI.changeClass(h.totalProfit) + '">' + UI.fmtMoney(h.totalProfit) + '</span></div>' +
+      '</div>' + planLine +
       '<div class="hd-returns">' +
       '<div>近1周 ' + rt(w) + '</div><div>近1月 ' + rt(m) + '</div>' +
       '<div>近3月 ' + rt(q) + '</div><div>近1年 ' + rt(y) + '</div>' +
@@ -518,9 +734,10 @@
       (expanded ? '<span class="expand-ico">▴</span>' : '<span class="expand-ico">▾</span>') +
       '</div>' +
       '<div class="hold-actions">' +
-      '<button class="btn-mini" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
-      '<button class="btn-mini dca-btn" data-action="dca" data-board="' + h.boardKey + '" data-id="' + h.id + '">定投</button>' +
-      '<button class="btn-mini" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
+      '<button class="btn-mini act-buy" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="buy">买入</button>' +
+      '<button class="btn-mini act-sell" data-action="trade" data-board="' + h.boardKey + '" data-id="' + h.id + '" data-dir="sell">卖出</button>' +
+      '<button class="btn-mini dca-btn" data-action="dca-plan" data-board="' + h.boardKey + '" data-id="' + h.id + '">' +
+      (plan ? '定投计划 ·<span class="dca-btn-sub"> ' + freqLabel(plan) + '</span>' : '＋ 定投计划') + '</button>' +
       '</div>' + detail;
   }
 
@@ -571,7 +788,8 @@
             return '<div class="dca-plan-row" data-action="edit-dca" data-id="' + p.id + '">' +
               '<div class="dca-p-main">' +
               '<div class="li-title">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
-              '<div class="li-sub">' + boardName(p.board) + ' · ' + freqLabel(p) + (due ? ' · <span class="due-tag">待记</span>' : '') + '</div>' +
+              '<div class="li-sub">' + boardName(p.board) + ' · ' + freqLabel(p) + ' · ' + planAmountLabel(p) +
+              (due ? ' · <span class="due-tag">待记</span>' : '') + '</div>' +
               '</div>' +
               '<button class="btn-mini danger" data-action="delete-dca" data-id="' + p.id + '">删除</button>' +
               '</div>';
@@ -583,6 +801,11 @@
       '<div class="pc-row clickable" data-action="export"><span>导出备份（JSON）</span><span>›</span></div>' +
       '<div class="pc-row clickable" data-action="import"><span>导入备份（JSON）</span><span>›</span></div>' +
       '<div class="pc-row clickable danger" data-action="reset"><span>清空全部数据</span><span>›</span></div>' +
+      '</div>' +
+      '<div class="profile-card">' +
+      '<div class="pc-title">版本</div>' +
+      '<div class="pc-row"><span>当前版本</span><span class="muted">' + APP_VERSION + '</span></div>' +
+      '<div class="pc-row clickable" data-action="force-update"><span>检查更新（清缓存重载）</span><span>›</span></div>' +
       '</div>' +
       '<div class="about">家庭财务助手 · 纯私密理财工具<br>' +
       (window.Remote && Remote.isEnabled()
@@ -665,6 +888,17 @@
       const h = Store.state.boards[board].invest.find(x => x.id === id);
       openTradeSheet({ board: board, code: h ? h.code : '', action: el.dataset.dir || 'buy' }); return;
     }
+    // 每笔持仓下的「定投计划」：已有则编辑，没有则用该基金信息预填新建
+    if (a === 'dca-plan') {
+      const h = Store.state.boards[board] ? Store.state.boards[board].invest.find(x => x.id === id) : null;
+      if (!h) return;
+      const exist = findPlan(board, h.code);
+      if (exist) openDcaPlanSheet(exist);
+      else openDcaPlanSheet(null, { board: board, code: h.code, name: h.name, price: h.lastNav || 0 });
+      return;
+    }
+    // 板块级：先选基金再建计划
+    if (a === 'dca-plan-board') { openDcaPlanPicker(board); return; }
     if (a === 'dca') {
       const h = Store.state.boards[board].invest.find(x => x.id === id);
       openTradeSheet({ board: board, code: h ? h.code : '', action: 'buy', dca: true }); return;
@@ -672,7 +906,14 @@
     if (a === 'dca-record') {
       const plan = (Store.state.dcaPlans || []).find(x => x.id === el.dataset.plan);
       if (!plan) return;
-      openTradeSheet({ board: plan.board, code: plan.code, action: 'buy', dca: true, shares: plan.shares, price: plan.price, note: plan.note });
+      const byAmount = plan.mode !== 'shares';
+      openTradeSheet({
+        board: plan.board, code: plan.code, action: 'buy', dca: true,
+        mode: byAmount ? 'amount' : 'shares',
+        amount: byAmount ? plan.amount : '',
+        shares: byAmount ? '' : plan.shares,
+        price: plan.price, note: plan.note,
+      });
       return;
     }
     if (a === 'add-dca') { openDcaPlanSheet(null); return; }
@@ -687,6 +928,7 @@
       });
       return;
     }
+    if (a === 'force-update') { forceUpdate(); return; }
     if (a === 'snapshot-history') { openSnapshotHistory(); return; }
     if (a === 'export') { exportData(); return; }
     if (a === 'import') { importData(); return; }
@@ -714,6 +956,22 @@
       else if (k === 'autoRefreshInvest') { Store.updateSettings({ autoRefreshInvest: t.checked }); }
       render(); return;
     }
+  }
+
+  /* 强制取回最新版本：清空 PWA 缓存 + 注销 SW 后重载（不动 localStorage，数据不会丢） */
+  async function forceUpdate() {
+    UI.toast('正在获取最新版本…');
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    } catch (e) { /* 忽略，直接重载 */ }
+    location.reload(true);
   }
 
   /* ---------------- 导入 / 导出 ---------------- */
@@ -819,7 +1077,11 @@
     document.querySelectorAll('.tabbar button').forEach(b => {
       b.addEventListener('click', () => {
         currentTab = b.dataset.tab;
-        if (currentTab === 'invest' && Store.state.settings.autoRefreshInvest) refreshAll(false);
+        // 进入投资页自动刷新：5 分钟内刚刷过就不重复请求
+        if (currentTab === 'invest' && Store.state.settings.autoRefreshInvest) {
+          const last = (Store.state.lastRefresh && Store.state.lastRefresh.time) || 0;
+          if (Date.now() - last > 5 * 60 * 1000) refreshAll(false);
+        }
         render();
       });
     });
@@ -829,6 +1091,8 @@
       Store.updateSettings({ hideAmount: !Store.state.settings.hideAmount });
       render();
     });
+    const rBtn = document.getElementById('refresh-btn');
+    if (rBtn) rBtn.addEventListener('click', () => refreshAll(true));
 
     // 自动探测后端：存在则进入「云端多设备」模式，否则保持本地模式
     let remote = false;
@@ -843,8 +1107,15 @@
     render();
 
     // PWA Service Worker（仅在 http/https 下注册）
-    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    if (navigator.serviceWorker && location.protocol.indexOf('http') === 0) {
+      try {
+        const reg = await navigator.serviceWorker.register('./sw.js');
+        // 发现新版本时立即接管，避免手机一直停留在旧页面
+        if (reg && reg.update) reg.update().catch(() => {});
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!window.__ffaReloaded) { window.__ffaReloaded = true; location.reload(); }
+        });
+      } catch (e) { /* 注册失败不影响使用 */ }
     }
   }
 

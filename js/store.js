@@ -29,6 +29,7 @@
       snapshots: [],
       dcaPlans: [],
       dcaDone: {},
+      lastRefresh: null,         // { time, ok, fail, trading, navDate }
     };
   }
 
@@ -48,6 +49,7 @@
     d.snapshots = Array.isArray(s.snapshots) ? s.snapshots : [];
     d.dcaPlans = Array.isArray(s.dcaPlans) ? s.dcaPlans : [];
     d.dcaDone = (s.dcaDone && typeof s.dcaDone === 'object') ? s.dcaDone : {};
+    d.lastRefresh = (s.lastRefresh && typeof s.lastRefresh === 'object') ? s.lastRefresh : null;
     return d;
   }
 
@@ -181,6 +183,7 @@
   }
 
   /* ---------------- 设置 / 重置 ---------------- */
+  function setLastRefresh(info) { state.lastRefresh = info || null; save(); }
   function updateSettings(patch) { Object.assign(state.settings, patch); save(); }
   function resetAll() { state = defaultState(); save(); }
   function replaceState(parsed) { state = mergeDefaults(parsed); save(); }
@@ -249,7 +252,7 @@
     addCash, updateCash, deleteCash,
     addHolding, updateHolding, deleteHolding,
     addTrade, deleteTrade,
-    addSnapshot, updateSettings, resetAll, replaceState,
+    addSnapshot, updateSettings, resetAll, replaceState, setLastRefresh,
     addDcaPlan, updateDcaPlan, deleteDcaPlan,
     cashTotal, investTotal, boardTotal, boardInvestTodayProfit, boardInvestTotalProfit,
     globalTotals, allHoldings, allCash,
