@@ -30,6 +30,8 @@
       snapshots: [],
       dcaPlans: [],
       dcaDone: {},
+      reconLedger: [],           // 对账明细：所有资金操作的独立记录，仅供对账，删除不影响实际资金
+      reconMigrated: false,      // 首次启动是否已从 cash/trades 回填对账明细
       lastRefresh: null,         // { time, ok, fail, trading, navDate }
     };
   }
@@ -50,6 +52,8 @@
     d.snapshots = Array.isArray(s.snapshots) ? s.snapshots : [];
     d.dcaPlans = Array.isArray(s.dcaPlans) ? s.dcaPlans : [];
     d.dcaDone = (s.dcaDone && typeof s.dcaDone === 'object') ? s.dcaDone : {};
+    d.reconLedger = Array.isArray(s.reconLedger) ? s.reconLedger : [];
+    d.reconMigrated = !!s.reconMigrated;
     d.lastRefresh = (s.lastRefresh && typeof s.lastRefresh === 'object') ? s.lastRefresh : null;
     return d;
   }
@@ -85,6 +89,8 @@
       time: item.time || Date.now(),
     };
     b.cash.unshift(rec);
+    // 对账明细：记录每一笔资金收支（删除仅作对账，不影响实际余额）
+    logRecon({ id: 'r_' + rec.id, time: rec.time, board: boardKey, kind: rec.type === 'expense' ? 'expense' : 'income', code: '', name: rec.note || (rec.type === 'expense' ? '支取' : '存入'), amount: rec.type === 'expense' ? -rec.amount : rec.amount, shares: 0, price: 0, fee: 0, note: '', src: 'manual' });
     save();
     return rec;
   }
@@ -168,6 +174,9 @@
         save();
       }
     }
+    // 对账明细：记录每一笔买入/卖出（定投、调拨等也都经由 addTrade/addCash，自动捕获）。删除仅作对账，不影响实际持仓与资金。
+    const _rh = state.boards[rec.board] && state.boards[rec.board].invest.find(x => x.code === rec.code);
+    logRecon({ id: 'r_' + rec.id, time: rec.time, board: rec.board, kind: rec.action === 'sell' ? 'sell' : 'buy', code: rec.code, name: _rh && _rh.name ? _rh.name : '', amount: rec.action === 'buy' ? -(rec.shares * rec.price) : (rec.shares * rec.price), shares: rec.shares, price: rec.price, fee: 0, note: rec.note, src: rec.dca ? 'auto-dca' : 'manual' });
     // 定投计划：仅当本次买入明确关联某个计划（planId）时，标记该计划已完成本期。
     // 不能按「同基金代码」批量标记，否则同一基金的多笔定投计划会互相干扰（一笔执行就全部算完成）。
     if (rec.action === 'buy' && rec.dca && rec.planId) {
@@ -180,6 +189,62 @@
   function deleteTrade(id) {
     state.trades = state.trades.filter(t => t.id !== id);
     save();
+  }
+
+  /* ---------------- 对账明细（独立记录，仅供对账，删除不影响资金本身状态） ---------------- */
+  function logRecon(e) {
+    const rec = {
+      id: e.id || uid(),
+      time: e.time || Date.now(),
+      board: e.board || '',
+      kind: e.kind || 'cash',            // income | expense | buy | sell
+      code: (e.code || '').toString().trim(),
+      name: (e.name || '').toString().slice(0, 40),
+      amount: Number(e.amount) || 0,      // 带符号资金流：收入/卖出为正，支出/买入为负
+      shares: Math.max(0, Number(e.shares) || 0),
+      price: Math.max(0, Number(e.price) || 0),
+      fee: Math.max(0, Number(e.fee) || 0),
+      note: (e.note || '').toString().slice(0, 60),
+      src: e.src || 'manual',            // manual | auto-dca
+    };
+    state.reconLedger.unshift(rec);
+    if (state.reconLedger.length > 2000) state.reconLedger.length = 2000;
+    save();
+    return rec;
+  }
+  function deleteRecon(id) {
+    state.reconLedger = state.reconLedger.filter(r => r.id !== id);
+    save();
+  }
+  function allRecon() { return state.reconLedger.slice(); }
+  function migrateRecon() {
+    if (state.reconMigrated) return;
+    BOARD_DEFS.forEach(b => {
+      state.boards[b.key].cash.forEach(c => {
+        if (state.reconLedger.some(r => r.id === 'r_' + c.id)) return;
+        state.reconLedger.push({
+          id: 'r_' + c.id, time: c.time, board: b.key,
+          kind: c.type === 'expense' ? 'expense' : 'income', code: '',
+          name: c.note || (c.type === 'expense' ? '支取' : '存入'),
+          amount: c.type === 'expense' ? -c.amount : c.amount,
+          shares: 0, price: 0, fee: 0, note: '', src: 'manual',
+        });
+      });
+    });
+    state.trades.forEach(t => {
+      if (state.reconLedger.some(r => r.id === 'r_' + t.id)) return;
+      const h = state.boards[t.board] && state.boards[t.board].invest.find(x => x.code === t.code);
+      state.reconLedger.push({
+        id: 'r_' + t.id, time: t.time, board: t.board,
+        kind: t.action === 'sell' ? 'sell' : 'buy', code: t.code,
+        name: h && h.name ? h.name : '',
+        amount: t.action === 'buy' ? -(t.shares * t.price) : (t.shares * t.price),
+        shares: t.shares, price: t.price, fee: 0, note: t.note,
+        src: t.dca ? 'auto-dca' : 'manual',
+      });
+    });
+    state.reconMigrated = true;
+    if (state.reconLedger.length) save();
   }
 
   /* ---------------- 刷新快照 ---------------- */
@@ -262,6 +327,7 @@
     addCash, updateCash, deleteCash,
     addHolding, updateHolding, deleteHolding,
     addTrade, deleteTrade,
+    logRecon, deleteRecon, allRecon, migrateRecon,
     addSnapshot, updateSettings, resetAll, replaceState, setLastRefresh,
     addDcaPlan, updateDcaPlan, deleteDcaPlan,
     cashTotal, investTotal, boardTotal, boardInvestTodayProfit, boardInvestTotalProfit,

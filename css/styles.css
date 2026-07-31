@@ -239,6 +239,45 @@ body {
 .dca-p-main { flex: 1; min-width: 0; }
 .due-tag { color: #c2410c; font-size: 11px; font-weight: 600; }
 .li-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.li-sub2 { font-size: 11px; color: var(--muted); margin-top: 2px; }
+/* 定投状态：首页状态条 + 个人中心分组列表 */
+.dca-r-head { font-size: 14px; font-weight: 600; color: #1f2937; margin-bottom: 8px; }
+.dca-r-head b { color: #0f9b74; }
+.dca-summary { font-size: 13px; color: var(--muted); padding: 4px 14px 8px; }
+.dca-summary .ds { font-weight: 600; margin: 0 2px; }
+.dca-summary .ds.done { color: #0f9b74; }
+.dca-summary .ds.due { color: #c2410c; }
+.dca-summary .ds.pending { color: #6b7280; }
+.dca-group { border-top: 1px solid var(--line); }
+.dca-g-head { font-size: 12px; color: var(--muted); font-weight: 600; padding: 8px 14px 2px; background: #fafbfc; }
+.dca-pill { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 10px; padding: 1px 8px; margin-left: 4px; vertical-align: middle; }
+.dca-pill.done { color: #0f7a5a; background: #d7f5e9; }
+.dca-pill.due { color: #b34700; background: #ffe6cc; }
+.dca-pill.pending { color: #555f6b; background: #eceff3; }
+.dca-auto { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 10px; padding: 1px 8px; margin-left: 4px; vertical-align: middle; }
+.dca-auto { color: #2563eb; background: #dbeafe; }
+.dca-auto.manual { color: #6b7280; background: #eceff3; }
+/* 对账明细（仅对账，删除不影响资金本身状态） */
+.ledger-tip { font-size: 12px; color: var(--muted); background: #fff8e6; border: 1px solid #f3e3b3; border-radius: 8px; padding: 8px 10px; margin: 8px 12px; line-height: 1.5; }
+.ledger-tip b { color: #b34700; }
+.recon-row { display: flex; align-items: stretch; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: #fff; }
+.recon-row:last-child { border-bottom: none; }
+.recon-main { flex: 1; min-width: 0; }
+.recon-top { display: flex; align-items: center; gap: 8px; }
+.recon-badge { flex: none; font-size: 11px; font-weight: 700; border-radius: 8px; padding: 1px 7px; }
+.recon-badge.k-income { color: #0f7a5a; background: #d7f5e9; }
+.recon-badge.k-expense { color: #b34700; background: #ffe6cc; }
+.recon-badge.k-buy { color: #1d4ed8; background: #dbeafe; }
+.recon-badge.k-sell { color: #7c3aed; background: #ede9fe; }
+.recon-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #1f2937; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recon-amt { flex: none; font-size: 14px; font-weight: 700; }
+.recon-amt.up { color: #c0392b; }
+.recon-amt.down { color: #1e8a5b; }
+.recon-amt.flat { color: #5b6470; }
+.recon-sub { font-size: 12px; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recon-time { font-size: 11px; color: #9aa3af; margin-top: 2px; }
+.recon-del { flex: none; align-self: center; width: 30px; height: 30px; font-size: 18px; line-height: 1; color: #b0b6bf; background: #f2f4f7; border: none; border-radius: 8px; cursor: pointer; }
+.recon-del:active { background: #e6e9ee; color: #e0533f; }
 /* 备注按钮 + 备注展示（简洁不冗余） */
 .li-note-btn {
   display: inline-block; margin-top: 6px; padding: 3px 11px; font-size: 12px;

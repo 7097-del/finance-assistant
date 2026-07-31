@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-3';
+  const APP_VERSION = '2026-08-01-4';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -137,6 +137,30 @@
     return '每月' + (Number(plan.param) || 1) + '号';
   }
   function boardName(key) { const d = Store.BOARD_DEFS.find(b => b.key === key); return d ? d.name : key; }
+
+  /* 短日期 M/D（无年份，定投状态用） */
+  function fmtYMD(ts) {
+    if (!ts) return '从未';
+    const d = new Date(ts);
+    const p = n => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '/' + p(d.getDate());
+  }
+  /* 定投计划状态：done=本期已执行 / due=已到期待处理 / pending=未到待执行
+   * lastExec 取 自动扣款时间 与 手动记一笔标记 的较大者（两者都算「本期已执行」） */
+  function dcaStatusInfo(plan, now) {
+    now = now || Date.now();
+    const lastExec = (plan.lastAuto || (Store.state.dcaDone && Store.state.dcaDone[plan.id]) || 0);
+    const keyNow = periodKey(plan, now);
+    const doneThisPeriod = !!lastExec && periodKey(plan, lastExec) === keyNow;
+    const due = now >= nextDue(plan, lastExec || 0);
+    let state;
+    if (doneThisPeriod) state = 'done';
+    else if (due) state = 'due';
+    else state = 'pending';
+    // 自动：开启「定投自动执行」且配置了扣款来源板块（或回退到本计划板块）
+    const auto = !!Store.state.settings.autoDca && !!(plan.fromBoard || plan.board);
+    return { state: state, lastExec: lastExec, nextDue: nextDue(plan, now), auto: auto };
+  }
 
   /* ---------------- 净值刷新 ---------------- */
   /* 兼容后端返回的旧字段结构 */
@@ -829,7 +853,7 @@
       '<div class="bh-left"><div class="board-name">' + def.name + '</div>' +
       '<div class="board-sub">现金 ' + UI.fmtMoney(cashTotal) + ' · 投资 ' + UI.fmtMoney(investTotal) + '</div></div>' +
       '<div class="bh-right"><div class="board-total">' + UI.fmtMoney(boardTotal) + '</div>' +
-      '<div class="board-today ' + UI.changeClass(investToday) + '">今日 ' + UI.fmtMoney(investToday) + '</div>' +
+      '<div class="board-today ' + UI.changeClass(investToday) + '">' + (investToday > 0 ? '📈 ' : (investToday < 0 ? '📉 ' : '')) + '今日 ' + UI.fmtMoney(investToday) + '</div>' +
       '<div class="board-profit ' + UI.changeClass(investProfit) + '">累计 ' + UI.fmtMoney(investProfit) + '</div></div>' +
       '<span class="chev">▾</span>' +
       '</div>' +
@@ -885,9 +909,19 @@
   }
 
   function renderDcaReminder() {
-    const plans = (Store.state.dcaPlans || []).filter(p => p.enabled !== false && isDue(p));
+    const plans = (Store.state.dcaPlans || []).filter(p => p.enabled !== false);
     if (plans.length === 0) return '';
-    const items = plans.map(p =>
+    const now = Date.now();
+    let done = 0, due = 0, pending = 0;
+    const infos = plans.map(p => {
+      const i = dcaStatusInfo(p, now);
+      if (i.state === 'done') done++; else if (i.state === 'due') due++; else pending++;
+      return { p: p, i: i };
+    });
+    const summary = '<div class="dca-r-head">📊 定投状态：已执行 <b>' + done + '/' + plans.length + '</b> · 待记 ' + due + ' · 待执行 ' + pending + '</div>';
+    // 仅「到期待处理 且 未开启自动」的计划需要手动记一笔
+    const actionable = infos.filter(x => x.i.state === 'due' && !x.i.auto);
+    const items = actionable.map(({ p }) =>
       '<div class="dca-item">' +
       '<div class="dca-i-main">' +
       '<div class="dca-i-name">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
@@ -895,9 +929,7 @@
       '</div>' +
       '<button class="dca-rec-btn" data-action="dca-record" data-plan="' + p.id + '">记一笔</button>' +
       '</div>').join('');
-    return '<div class="dca-reminder">' +
-      '<div class="dca-r-head">🔔 你有 ' + plans.length + ' 笔定投待记</div>' +
-      items + '</div>';
+    return '<div class="dca-reminder">' + summary + items + '</div>';
   }
 
   /* 今日 YYYY-MM-DD（本地） */
@@ -937,24 +969,91 @@
     return note ? '<div class="li-note">📝 ' + escapeHtml(note) + '</div>' : '';
   }
 
-  /* ---------------- 渲染：收支明细（与时间轴一致，沿用首页可展开明细行） ---------------- */
+  /* ---------------- 渲染：对账明细（所有资金操作记录，删除仅对账、不影响资金本身状态） ---------------- */
   function renderLedger() {
-    let items = Store.allCash().slice().sort((a, b) => b.time - a.time);
-    if (ledgerFilter.board !== 'all') items = items.filter(c => c.boardKey === ledgerFilter.board);
+    let items = Store.allRecon().slice().sort((a, b) => b.time - a.time);
+    if (ledgerFilter.board !== 'all') items = items.filter(c => c.board === ledgerFilter.board);
     const html = items.length === 0
-      ? '<div class="empty">暂无收支记录</div>'
-      : items.map(c => cashRowHtml(c, c.boardKey)).join('');
+      ? '<div class="empty">暂无对账记录</div>'
+      : items.map(c => reconRowHtml(c)).join('');
     return '' +
       '<div class="filter-bar">' +
       '<select class="f-select" data-filter="ledger-board"><option value="all">全部板块</option>' + boardSelectOptions(ledgerFilter.board) + '</select>' +
-      '<span class="muted">共 ' + items.length + ' 条</span>' +
-      '</div>' + html;
+      '<span class="muted">共 ' + items.length + ' 条 · 仅对账</span>' +
+      '</div>' +
+      '<div class="ledger-tip">📑 本页为对账明细：记录每一笔资金操作（存入/支取/买入/卖出/自动定投）。删除某条仅移除对账记录，<b>不会改变实际资金余额与持仓</b>。</div>' +
+      html;
+  }
+  function fmtDateTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function reconRowHtml(c) {
+    const kindLabel = { income: '存入', expense: '支取', buy: '买入', sell: '卖出' }[c.kind] || c.kind;
+    const amt = Number(c.amount) || 0;
+    const amtStr = (amt >= 0 ? '+' : '-') + UI.fmtMoney(Math.abs(amt));
+    const amtClass = amt > 0 ? 'up' : (amt < 0 ? 'down' : 'flat');
+    const sub = [];
+    sub.push(boardName(c.board));
+    if (c.shares) sub.push(c.shares + ' 份 @ ' + UI.fmtMoney(c.price));
+    if (c.fee) sub.push('手续费 ' + UI.fmtMoney(c.fee));
+    if (c.note) sub.push(c.note);
+    if (c.src === 'auto-dca') sub.push('自动定投');
+    return '<div class="recon-row" data-recon="' + c.id + '">' +
+      '<div class="recon-main">' +
+      '<div class="recon-top">' +
+      '<span class="recon-badge k-' + c.kind + '">' + kindLabel + '</span>' +
+      '<span class="recon-name">' + escapeHtml(c.name || '') + (c.code ? ' <span class="li-code">' + c.code + '</span>' : '') + '</span>' +
+      '<span class="recon-amt ' + amtClass + '">' + amtStr + '</span>' +
+      '</div>' +
+      '<div class="recon-sub">' + sub.join(' · ') + '</div>' +
+      '<div class="recon-time">' + fmtDateTime(c.time) + '</div>' +
+      '</div>' +
+      '<button class="recon-del" data-action="delete-recon" data-id="' + c.id + '" title="删除该对账记录（不影响实际资金）">×</button>' +
+      '</div>';
   }
 
   /* ---------------- 渲染：个人中心 ---------------- */
+  /* 定投计划列表：先给整体汇总（已执行/待记/待执行），再按三大板块分组，多笔也一目了然 */
+  function renderDcaPlans() {
+    const plans = Store.state.dcaPlans || [];
+    if (plans.length === 0) return '<div class="empty" style="padding:10px 0">还没有定投计划，点下方添加</div>';
+    const now = Date.now();
+    let done = 0, due = 0, pending = 0;
+    const infos = plans.map(p => {
+      const i = dcaStatusInfo(p, now);
+      if (i.state === 'done') done++; else if (i.state === 'due') due++; else pending++;
+      return { p: p, i: i };
+    });
+    const summary = '<div class="dca-summary">共 ' + plans.length + ' 笔 · ' +
+      '<span class="ds done">已执行 ' + done + '</span> · ' +
+      '<span class="ds due">待记 ' + due + '</span> · ' +
+      '<span class="ds pending">待执行 ' + pending + '</span></div>';
+    const groups = Store.BOARD_DEFS.map(def => {
+      const rows = infos.filter(x => x.p.board === def.key);
+      if (rows.length === 0) return '';
+      const body = rows.map(({ p, i }) => {
+        const pill = i.state === 'done' ? '<span class="dca-pill done">已执行</span>'
+          : i.state === 'due' ? '<span class="dca-pill due">待记</span>'
+          : '<span class="dca-pill pending">待执行</span>';
+        const autoTag = i.auto ? '<span class="dca-auto">自动</span>' : '<span class="dca-auto manual">手动</span>';
+        return '<div class="dca-plan-row" data-action="edit-dca" data-id="' + p.id + '">' +
+          '<div class="dca-p-main">' +
+          '<div class="li-title">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span> ' + pill + ' ' + autoTag + '</div>' +
+          '<div class="li-sub">' + freqLabel(p) + ' · ' + planAmountLabel(p) + '</div>' +
+          '<div class="li-sub2">上次 ' + fmtYMD(i.lastExec) + ' · 下次 ' + fmtYMD(i.nextDue) + '</div>' +
+          '</div>' +
+          '<button class="btn-mini danger" data-action="delete-dca" data-id="' + p.id + '">删除</button>' +
+          '</div>';
+      }).join('');
+      return '<div class="dca-group"><div class="dca-g-head">' + def.name + '（' + rows.length + '）</div>' + body + '</div>';
+    }).join('');
+    return summary + groups;
+  }
   function renderProfile() {
     const s = Store.state.settings;
-    const plans = Store.state.dcaPlans || [];
     const schemeOpts = '<option value="redUp"' + (s.colorScheme === 'redUp' ? ' selected' : '') + '>红涨绿跌</option>' +
       '<option value="greenUp"' + (s.colorScheme === 'greenUp' ? ' selected' : '') + '>绿涨红跌</option>';
     const snapOpts = [10, 20, 30, 50, 100].map(n =>
@@ -973,19 +1072,7 @@
       '<div class="profile-card">' +
       '<div class="pc-title">定投计划</div>' +
       '<div class="pc-row"><span>定投自动执行<small class="pc-hint">到扣款日自动从来源板块扣款买入</small></span>' + toggle('autoDca', s.autoDca) + '</div>' +
-      (plans.length === 0
-        ? '<div class="empty" style="padding:10px 0">还没有定投计划，点下方添加</div>'
-        : plans.map(p => {
-            const due = isDue(p);
-            return '<div class="dca-plan-row" data-action="edit-dca" data-id="' + p.id + '">' +
-              '<div class="dca-p-main">' +
-              '<div class="li-title">' + escapeHtml(p.name || p.code) + ' <span class="li-code">' + p.code + '</span></div>' +
-              '<div class="li-sub">' + boardName(p.board) + ' · ' + freqLabel(p) + ' · ' + planAmountLabel(p) +
-              (due ? ' · <span class="due-tag">待记</span>' : '') + '</div>' +
-              '</div>' +
-              '<button class="btn-mini danger" data-action="delete-dca" data-id="' + p.id + '">删除</button>' +
-              '</div>';
-          }).join('')) +
+      renderDcaPlans() +
       '<div class="pc-row clickable" data-action="add-dca"><span>＋ 新增定投计划</span><span>›</span></div>' +
       '</div>' +
       '<div class="profile-card">' +
@@ -1100,6 +1187,12 @@
     if (a === 'delete-trade') {
       UI.confirm({ title: '删除交易', message: '确认删除该条交易记录？持仓份额不会自动回滚。', okText: '删除' }).then(ok => {
         if (ok) { Store.deleteTrade(id); render(); }
+      }); return;
+    }
+    if (a === 'delete-recon') {
+      // 仅删除对账记录：不影响实际资金余额、持仓与任何定投计划
+      UI.confirm({ title: '删除对账记录', message: '该记录仅用于对账，删除后不会改变实际资金余额与持仓。确认删除？', okText: '删除' }).then(ok => {
+        if (ok) { Store.deleteRecon(id); render(); }
       }); return;
     }
     /* 明细行点击展开/收起：点一下才显示 备注/买入/卖出/定投/编辑/隐藏 等操作 */
@@ -1344,6 +1437,10 @@
       Remote.setEnabled(false);
     }
 
+    render();
+
+    // 对账明细：首次启动从历史现金/交易回填（仅对账用途，不影响资金本身）
+    Store.migrateRecon();
     render();
 
     // 自动定投：进入首页时扫描已到扣款日的计划，自动从「扣款来源板块」扣款买入
