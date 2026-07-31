@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-31-3';
+  const APP_VERSION = '2026-07-31-4';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -138,11 +138,14 @@
         const latestNav = useEst ? d.gsz : d.nav;
         const prevNav = useEst ? d.nav : d.prevNav;
         const todayChangePct = useEst ? d.gszzl : d.navChangePct;
+        // 展示用净值日期：盘中估算记「当日」，官方净值记接口返回的净值日（如 7.29）
+        const showDate = useEst ? todayYMD() : (d.navDate || '');
         Store.updateHolding(h.boardKey, h.id, {
           name: d.name || h.name,
           lastNav: latestNav,
           prevNav: prevNav,
-          navDate: d.navDate || '',
+          navDate: showDate,
+          estMode: useEst,
           todayChangePct: todayChangePct,
           marketValue: h.shares * latestNav,
           todayProfit: (latestNav - prevNav) * h.shares,
@@ -712,11 +715,12 @@
       const sub = isGold
         ? '克数 ' + UI.fmtNum(h.shares, 3) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3) + ' 元/克'
         : '份额 ' + UI.fmtNum(h.shares) + ' · 成本 ' + UI.fmtNum(h.avgCost, 3);
+      const dl = navDayLabel(h);
       return swipeItem({
         kind: 'invest', board: boardKey, id: h.id,
         main: '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + '</div>' +
           '<div class="li-sub">' + sub + '</div>' +
-          '<div class="li-sub pl-sub">本日 ' + UI.fmtMoney(h.todayProfit) + ' · 累计 ' + UI.fmtMoney(h.totalProfit) + '</div>',
+          '<div class="li-sub pl-sub">' + dl + ' ' + UI.fmtMoney(h.todayProfit) + ' · 累计 ' + UI.fmtMoney(h.totalProfit) + '</div>',
         right: '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
           '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>',
       });
@@ -801,13 +805,28 @@
       tradeHtml;
   }
 
-  /* 每只基金下方：本日盈亏金额 + 涨跌幅 / 累计盈亏金额 */
+  /* 今日 YYYY-MM-DD（本地） */
+  function todayYMD() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  /* 净值日期 → 展示标签：官方净值如 "7.29日"；盘中估算如 "7.30估值"；无日期回退 "本日" */
+  function navDayLabel(h) {
+    const d = h && h.navDate ? h.navDate : '';
+    if (!d) return '本日';
+    const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(d);
+    const md = m ? (parseInt(m[2], 10) + '.' + parseInt(m[3], 10)) : d.replace(/\s[\d:]+$/, '');
+    return (h && h.estMode) ? (md + '估值') : (md + '日');
+  }
+  /* 每只基金下方：当日盈亏金额 + 涨跌幅 / 累计盈亏金额 */
   function holdPline(h) {
     const tp = Number(h.todayProfit) || 0;
     const tpp = Number(h.todayChangePct) || 0;
     const tot = Number(h.totalProfit) || 0;
+    const dl = navDayLabel(h);
     return '<div class="hd-pline">' +
-      '<div class="pl-item"><span class="pl-k">本日盈亏</span>' +
+      '<div class="pl-item"><span class="pl-k">' + dl + '盈亏</span>' +
         '<span class="pl-v ' + UI.changeClass(tp) + '">' + UI.fmtMoney(tp) + '</span>' +
         '<span class="pl-p ' + UI.changeClass(tpp) + '">' + UI.fmtPct(tpp) + '</span></div>' +
       '<div class="pl-item"><span class="pl-k">累计盈亏</span>' +
