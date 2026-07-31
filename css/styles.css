@@ -233,6 +233,13 @@ body {
   border-radius: 0 0 10px 10px; margin-top: -9px;
 }
 .hold-actions .btn-mini { flex: 1; text-align: center; padding: 8px 4px; }
+/* 每只基金下方的本日/累计盈亏一行 */
+.hd-pline { display: flex; gap: 12px; padding: 8px 12px 10px; background: #fafbfc; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; margin-top: -9px; }
+.pl-item { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; }
+.pl-k { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pl-v { font-size: 14px; font-weight: 600; }
+.pl-p { font-size: 12px; }
+.pl-sub { font-size: 12px; color: var(--muted); }
 
 /* 个人中心 */
 .profile-card { background: var(--card); border-radius: 14px; margin-top: 12px; box-shadow: var(--shadow); overflow: hidden; }

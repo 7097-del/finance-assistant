@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-31-1';
+  const APP_VERSION = '2026-07-31-2';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -325,7 +325,7 @@
         }
         if (shares <= 0) throw new Error('请输入有效份额');
         const patch = { code: v.code.trim(), name: (v.name || '').trim() || '未命名基金', shares: shares, avgCost: cost };
-        if (edit) Store.updateHolding(h.boardKey, h.id, patch);
+        if (edit) Store.updateHolding(presetBoard || h.boardKey, h.id, patch);
         else Store.addHolding(v.board, patch);
       },
     }).then(() => render());
@@ -382,7 +382,7 @@
         if (grams <= 0) throw new Error('请输入有效克数');
         const name = (v.name || '').trim() || '如意金(实体黄金)';
         const patch = { kind: 'gold', code: 'RUYI', name: name, shares: grams, avgCost: cost };
-        if (edit) Store.updateHolding(h.boardKey, h.id, patch);
+        if (edit) Store.updateHolding(presetBoard || h.boardKey, h.id, patch);
         else Store.addHolding(v.board, patch);
       },
     }).then(() => render());
@@ -714,7 +714,8 @@
       return swipeItem({
         kind: 'invest', board: boardKey, id: h.id,
         main: '<div class="li-title">' + escapeHtml(h.name) + (isGold ? ' <span class="gold-badge">金</span>' : ' <span class="li-code">' + h.code + '</span>') + '</div>' +
-          '<div class="li-sub">' + sub + '</div>',
+          '<div class="li-sub">' + sub + '</div>' +
+          '<div class="li-sub pl-sub">本日 ' + UI.fmtMoney(h.todayProfit) + ' · 累计 ' + UI.fmtMoney(h.totalProfit) + '</div>',
         right: '<div class="li-amount">' + UI.fmtMoney(h.marketValue) + '</div>' +
           '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>',
       });
@@ -788,6 +789,20 @@
       tradeHtml;
   }
 
+  /* 每只基金下方：本日盈亏金额 + 涨跌幅 / 累计盈亏金额 */
+  function holdPline(h) {
+    const tp = Number(h.todayProfit) || 0;
+    const tpp = Number(h.todayChangePct) || 0;
+    const tot = Number(h.totalProfit) || 0;
+    return '<div class="hd-pline">' +
+      '<div class="pl-item"><span class="pl-k">本日盈亏</span>' +
+        '<span class="pl-v ' + UI.changeClass(tp) + '">' + UI.fmtMoney(tp) + '</span>' +
+        '<span class="pl-p ' + UI.changeClass(tpp) + '">' + UI.fmtPct(tpp) + '</span></div>' +
+      '<div class="pl-item"><span class="pl-k">累计盈亏</span>' +
+        '<span class="pl-v ' + UI.changeClass(tot) + '">' + UI.fmtMoney(tot) + '</span></div>' +
+      '</div>';
+  }
+
   function renderHoldingRow(h) {
     const expanded = expandedHoldings.has(h.id);
     const isGold = h.kind === 'gold';
@@ -833,6 +848,7 @@
       '</div>' +
       (expanded ? '<span class="expand-ico">▴</span>' : '<span class="expand-ico">▾</span>') +
       '</div>' +
+      holdPline(h) +
       (isGold
         ? '<div class="hold-actions">' +
           '<button class="btn-mini" data-action="edit-holding" data-board="' + h.boardKey + '" data-id="' + h.id + '">编辑</button>' +
