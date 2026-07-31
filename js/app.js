@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-07-31-2';
+  const APP_VERSION = '2026-07-31-3';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -13,6 +13,7 @@
 
   let currentTab = 'home';
   const foldState = {};                 // 板块折叠状态（内存）
+  const subOpen = {};                   // 板块内 现金/投资 子区展开状态（内存）
   const expandedHoldings = new Set();   // 持仓展开详情
   let refreshing = false;
   const investFilter = { board: 'all', kw: '' };
@@ -623,7 +624,7 @@
       '<div class="total-card">' +
       '<div class="total-label">总资产（元）</div>' +
       '<div class="total-value">' + UI.fmtMoney(g.grandTotal) + '</div>' +
-      '<div class="total-profit">总盈亏 <span class="' + UI.changeClass(g.totalProfit) + '">' + UI.fmtMoney(g.totalProfit) + '</span></div>' +
+      '<div class="total-profit ' + (g.totalProfit > 0 ? 'tp-up' : (g.totalProfit < 0 ? 'tp-down' : 'tp-flat')) + '">总盈亏 <span class="' + UI.changeClass(g.totalProfit) + '">' + UI.fmtMoney(g.totalProfit) + '</span></div>' +
       '<div class="ring-wrap">' + ring + '</div>' +
       '</div>' +
       refreshStatusBar() +
@@ -720,23 +721,36 @@
           '<div class="li-pct ' + UI.changeClass(h.todayChangePct) + '">' + UI.fmtPct(h.todayChangePct) + '</div>',
       });
     }).join('');
-    const empty = (cash.length === 0 && invest.length === 0) ? '<div class="empty">暂无记录，点击下方明细「+」添加</div>' : '';
+    const cashOpen = subOpen[boardKey + ':cash'] === true;
+    const investOpen = subOpen[boardKey + ':invest'] === true;
+    const empty = (cash.length === 0 && invest.length === 0) ? '<div class="empty">暂无记录，点上方「现金 / 投资」展开后添加</div>' : '';
     const detailHtml = '' +
-      '<div class="board-detail">' +
-      '<div class="bd-row">' +
-      '<span class="bd-label">💰 现金</span>' +
-      '<span class="bd-val">' + UI.fmtMoney(cashTotal) + '</span>' +
-      '<button class="bd-add" data-action="add-cash-board" data-board="' + boardKey + '" title="记一笔现金收支">＋</button>' +
+      '<div class="sec-btns">' +
+        '<button class="sec-btn ' + (cashOpen ? 'open' : '') + '" data-action="toggle-sub" data-board="' + boardKey + '" data-sub="cash">' +
+          '<span class="sec-ico">💰</span>' +
+          '<span class="sec-name">现金</span>' +
+          '<span class="sec-val">' + UI.fmtMoney(cashTotal) + '</span>' +
+          '<span class="sec-chev">' + (cashOpen ? '▾' : '▸') + '</span>' +
+        '</button>' +
+        '<button class="sec-btn ' + (investOpen ? 'open' : '') + '" data-action="toggle-sub" data-board="' + boardKey + '" data-sub="invest">' +
+          '<span class="sec-ico">📈</span>' +
+          '<span class="sec-name">投资</span>' +
+          '<span class="sec-val ' + UI.changeClass(investProfit) + '">' + UI.fmtMoney(investTotal) + '</span>' +
+          '<span class="sec-chev">' + (investOpen ? '▾' : '▸') + '</span>' +
+        '</button>' +
       '</div>' +
-      '<div class="bd-row">' +
-      '<span class="bd-label">📈 投资</span>' +
-      '<span class="bd-val">' + UI.fmtMoney(investTotal) + '</span>' +
-      '<button class="bd-sell" data-action="dca-plan-board" data-board="' + boardKey + '" title="设置定投计划">定投</button>' +
-      '<button class="bd-sell" data-action="sell-invest-board" data-board="' + boardKey + '" title="卖出基金持仓">卖出</button>' +
-      '<button class="bd-add" data-action="add-gold-board" data-board="' + boardKey + '" title="新增实体黄金（如意金）">金</button>' +
-      '<button class="bd-add" data-action="add-invest-board" data-board="' + boardKey + '" title="新增基金持仓">＋</button>' +
-      '</div>' +
-      '</div>';
+      (cashOpen ? '<div class="sub-body">' + cashHtml +
+        '<button class="sub-add" data-action="add-cash-board" data-board="' + boardKey + '">＋ 记一笔现金</button>' +
+      '</div>' : '') +
+      (investOpen ? '<div class="sub-body">' +
+        '<div class="inv-actions">' +
+          '<button class="inv-act" data-action="dca-plan-board" data-board="' + boardKey + '">定投</button>' +
+          '<button class="inv-act" data-action="sell-invest-board" data-board="' + boardKey + '">卖出</button>' +
+          '<button class="inv-act gold" data-action="add-gold-board" data-board="' + boardKey + '">金</button>' +
+          '<button class="inv-act add" data-action="add-invest-board" data-board="' + boardKey + '">＋</button>' +
+        '</div>' +
+        investHtml +
+      '</div>' : '');
     return '' +
       '<section class="board-card">' +
       '<div class="board-head" data-action="toggle-fold" data-board="' + boardKey + '">' +
@@ -747,9 +761,7 @@
       '<span class="fold-icon">' + (folded ? '▸' : '▾') + '</span>' +
       '</div>' +
       (folded ? '' :
-        '<div class="board-body">' + detailHtml + cashHtml + investHtml + empty +
-        '<button class="record-btn" data-action="record" data-board="' + boardKey + '">+ 记录到「' + def.name + '」</button>' +
-        '</div>') +
+        '<div class="board-body">' + detailHtml + empty + '</div>') +
       '</section>';
   }
 
@@ -987,6 +999,7 @@
     if (a === 'refresh' || a === 'refresh-invest') { refreshAll(true); return; }
     if (a === 'transfer') { openTransferSheet(); return; }
     if (a === 'toggle-fold') { foldState[board] = !foldState[board]; render(); return; }
+    if (a === 'toggle-sub') { const k = board + ':' + el.dataset.sub; subOpen[k] = subOpen[k] !== true; render(); return; }
     if (a === 'add-holding') { openHoldingSheet(null, null); return; }
     if (a === 'add-gold') { openGoldSheet(null, null); return; }
     if (a === 'add-gold-board') { openGoldSheet(board, null); return; }

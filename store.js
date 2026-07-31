@@ -107,6 +107,7 @@
       id: uid(),
       code: (h.code || '').toString().trim(),
       name: (h.name || '').toString().trim() || '未命名基金',
+      kind: h.kind === 'gold' ? 'gold' : 'fund',
       shares: Math.max(0, Number(h.shares) || 0),
       avgCost: Math.max(0, Number(h.avgCost) || 0),
       lastNav: 0, prevNav: 0, todayChangePct: 0,

@@ -79,8 +79,18 @@ body {
 }
 .total-label { font-size: 13px; opacity: .85; }
 .total-value { font-size: 30px; font-weight: 700; margin: 4px 0; letter-spacing: .5px; }
-.total-profit { font-size: 13px; opacity: .95; }
-.total-profit .up, .total-profit .down { font-weight: 600; }
+/* 总盈亏徽章：蓝底卡上红色看不清 → 改为带底色高对比徽章 */
+.total-profit {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding: 4px 12px; border-radius: 14px;
+  font-size: 13px; font-weight: 600;
+}
+.total-profit.tp-up { background: #fdecee; }
+.total-profit.tp-up .up { color: #c0392b; font-weight: 700; }
+.total-profit.tp-down { background: #e8f6ef; }
+.total-profit.tp-down .down { color: #1e8a5b; font-weight: 700; }
+.total-profit.tp-flat { background: rgba(255,255,255,.85); }
+.total-profit.tp-flat .flat { color: #5b6470; font-weight: 600; }
 
 /* 环形图 */
 .ring-wrap { margin-top: 14px; }
@@ -143,6 +153,39 @@ body {
   font-size: 13px; font-weight: 600; line-height: 1; cursor: pointer; box-shadow: none;
 }
 .bd-sell:active { transform: scale(.95); }
+
+/* 板块内 现金/投资 折叠按钮组（点击展开，页面更清爽） */
+.sec-btns { display: flex; gap: 10px; margin-top: 10px; }
+.sec-btn {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 11px 12px; border: none; border-radius: 12px; cursor: pointer;
+  background: #f2f4f7; color: var(--text); text-align: left;
+  transition: background .15s;
+}
+.sec-btn.open { background: #eaf2ff; }
+.sec-ico { font-size: 16px; flex: none; }
+.sec-name { font-size: 14px; font-weight: 600; }
+.sec-val { font-size: 14px; font-weight: 700; margin-left: auto; font-variant-numeric: tabular-nums; }
+.sec-chev { font-size: 12px; color: var(--muted); margin-left: 4px; }
+
+.sub-body { padding: 6px 0 2px; }
+.sub-add {
+  width: 100%; margin-top: 8px; padding: 9px; border-radius: 10px;
+  border: 1px dashed var(--brand); background: #eaf2ff; color: var(--brand-d);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+/* 投资区操作按钮：定投/卖出/金/＋ 同一行、等宽对齐 */
+.inv-actions { display: flex; gap: 8px; margin: 8px 0 2px; }
+.inv-act {
+  flex: 1; min-width: 0; height: 38px; border-radius: 10px; cursor: pointer;
+  font-size: 14px; font-weight: 600; line-height: 1;
+  background: #fff; color: var(--brand-d); border: 1px solid var(--brand);
+  display: flex; align-items: center; justify-content: center;
+}
+.inv-act.gold { color: #b8860b; border-color: #e0c068; background: #fff8e6; }
+.inv-act.add { background: var(--brand); color: #fff; border-color: var(--brand); font-size: 20px; }
+.inv-act:active { transform: scale(.96); }
 
 /* 列表项 / 左滑 */
 .swipe-item { position: relative; overflow: hidden; border-radius: 10px; margin-top: 8px; }
