@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-9';
+  const APP_VERSION = '2026-08-01-10';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -547,9 +547,9 @@
         { key: 'amount', label: '交易金额（元）', type: 'number', value: preset.amount || '', placeholder: '0.00' },
         { key: 'note', label: '备注', type: 'text', value: preset.note || '', placeholder: '可选' },
         ...(isSell ? [] : [{
-          key: 'cashSource', label: '资金来源（选填）', type: 'select', value: '',
+          key: 'cashSource', label: '资金来源（必填）', type: 'select',
+          value: 'board:' + (preset.board || Store.BOARD_DEFS[0].key),
           options: [
-            { value: '', label: '不扣款（仅记账）' },
             ...Store.BOARD_DEFS.map(b => ({ value: 'board:' + b.key, label: '从' + b.name + '存款扣' })),
             { value: 'external', label: '不在资产计划（外部资金）' },
           ],
@@ -589,10 +589,12 @@
         const buyBoard = resolveBuyBoard(v.code.trim(), v.board);
         // 投入金额：与扣款保持一致（按金额录入=amount；按份额录入=shares×price）
         const cashAmt = (v.mode === 'amount') ? (Number(v.amount) || 0) : (shares * price);
-        // 资金来源（选填）：从某板块存款扣款；外部资金则不扣任何板块
+        // 资金来源（必填）：钱不是凭空来的——必须从某板块存款扣，或明确选「外部资金」
         let srcBoard = null, external = false;
+        if (!v.cashSource) throw new Error('请选择资金来源');
         if (v.cashSource === 'external') external = true;
-        else if (v.cashSource && v.cashSource.indexOf('board:') === 0) srcBoard = v.cashSource.slice(6);
+        else if (v.cashSource.indexOf('board:') === 0) srcBoard = v.cashSource.slice(6);
+        else throw new Error('请选择资金来源');
         const noteExtra = [];
         if (srcBoard && srcBoard !== buyBoard) noteExtra.push('来源：' + boardName(srcBoard));
         if (external) noteExtra.push('外部资金');
