@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-7';
+  const APP_VERSION = '2026-08-01-8';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -111,21 +111,30 @@
     let executed = 0, totalAmt = 0;
     for (const plan of plans) {
       if (!autoEligible(plan, now)) continue;
-      const board = Store.state.boards[plan.board];
-      if (!board) continue;
-      const h = board.invest.find(x => x.code === plan.code);
-      if (!h) continue; // 没有对应持仓则跳过，避免凭空建仓
+      // 解析基金实际所在板块：优先 plan.board，否则在所有板块中按代码查找。
+      // 避免「归属板块」与基金真实持仓板块不一致导致扣了款却没买进对应基金。
+      let buyBoardKey = plan.board;
+      let h = Store.state.boards[buyBoardKey] && Store.state.boards[buyBoardKey].invest.find(x => x.code === plan.code);
+      if (!h) {
+        const alt = (Store.BOARD_DEFS || []).map(b => b.key).find(k =>
+          Store.state.boards[k] && Store.state.boards[k].invest.some(x => x.code === plan.code));
+        if (alt) { buyBoardKey = alt; h = Store.state.boards[alt].invest.find(x => x.code === plan.code); }
+      }
+      if (!h) continue; // 没有任何板块持有该基金则跳过，避免凭空建仓
       const price = (h.lastNav > 0 ? h.lastNav : (Number(plan.price) || 0));
       if (price <= 0) continue; // 无可用净值则留作「待记」，不自动执行
       let shares, cashAmt;
-      if (plan.mode === 'shares' && plan.shares > 0) { shares = plan.shares; cashAmt = shares * price; }
+      if (plan.mode === 'shares' && plan.shares > 0) { shares = Number(plan.shares); cashAmt = shares * price; }
       else { const amt = Number(plan.amount) || 0; if (amt <= 0) continue; shares = amt / price; cashAmt = amt; }
-      const fromBoard = plan.fromBoard || plan.board;
+      const fromBoard = plan.fromBoard || buyBoardKey;
       const note = (plan.note ? plan.note + ' · ' : '') + '自动定投';
-      Store.addTrade({ board: plan.board, code: plan.code, action: 'buy', shares: shares, price: price, note: note, dca: true, planId: plan.id, time: now });
+      Store.addTrade({ board: buyBoardKey, code: plan.code, action: 'buy', shares: shares, price: price, note: note, dca: true, planId: plan.id, time: now });
       Store.addCash(fromBoard, { type: 'expense', amount: cashAmt, note: '自动定投 ' + (plan.name || plan.code) + ' (' + plan.code + ')', time: now });
       Store.state.dcaDone[plan.id] = now; // 标记该计划本期已完成（按 planId，避免同基金多计划互相干扰）
-      Store.updateDcaPlan(plan.id, { lastAuto: now });
+      // 同步「归属板块」为基金真实所在板块，避免下次又找不到
+      const patch = { lastAuto: now };
+      if (buyBoardKey !== plan.board) patch.board = buyBoardKey;
+      Store.updateDcaPlan(plan.id, patch);
       executed++; totalAmt += cashAmt;
     }
     if (executed > 0) { UI.toast('已自动执行 ' + executed + ' 笔定投，扣款 ' + UI.fmtMoney(totalAmt)); render(); }
