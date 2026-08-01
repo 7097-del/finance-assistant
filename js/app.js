@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2026-08-01-8';
+  const APP_VERSION = '2026-08-01-9';
 
   const TABS = [
     { key: 'home', label: '首页' },
@@ -146,6 +146,17 @@
     return '每月' + (Number(plan.param) || 1) + '号';
   }
   function boardName(key) { const d = Store.BOARD_DEFS.find(b => b.key === key); return d ? d.name : key; }
+  /* 解析买入实际归属板块：优先用户所选，若基金实际挂在别的板块则落到真实持仓处，避免份额加错板块（与自动定投同逻辑） */
+  function resolveBuyBoard(code, preferred) {
+    let key = preferred;
+    let h = Store.state.boards[key] && Store.state.boards[key].invest.find(x => x.code === code);
+    if (!h) {
+      const alt = (Store.BOARD_DEFS || []).map(b => b.key).find(k =>
+        Store.state.boards[k] && Store.state.boards[k].invest.some(x => x.code === code));
+      if (alt) key = alt;
+    }
+    return key;
+  }
 
   /* 短日期 M/D（无年份，定投状态用） */
   function fmtYMD(ts) {
@@ -535,6 +546,14 @@
         { key: 'shares', label: '交易份额', type: 'number', value: preset.shares || '', placeholder: '0.00' },
         { key: 'amount', label: '交易金额（元）', type: 'number', value: preset.amount || '', placeholder: '0.00' },
         { key: 'note', label: '备注', type: 'text', value: preset.note || '', placeholder: '可选' },
+        ...(isSell ? [] : [{
+          key: 'cashSource', label: '资金来源（选填）', type: 'select', value: '',
+          options: [
+            { value: '', label: '不扣款（仅记账）' },
+            ...Store.BOARD_DEFS.map(b => ({ value: 'board:' + b.key, label: '从' + b.name + '存款扣' })),
+            { value: 'external', label: '不在资产计划（外部资金）' },
+          ],
+        }]),
       ],
       onInput: (v, api) => {
         const price = Number(v.price) || 0;
@@ -566,12 +585,28 @@
           shares = amt / price;
         }
         if (shares <= 0) throw new Error('请输入有效份额');
+        // 解析买入实际归属板块：优先用户所选，若基金实际挂在别的板块则落到真实持仓处，避免份额加错板块
+        const buyBoard = resolveBuyBoard(v.code.trim(), v.board);
+        // 投入金额：与扣款保持一致（按金额录入=amount；按份额录入=shares×price）
+        const cashAmt = (v.mode === 'amount') ? (Number(v.amount) || 0) : (shares * price);
+        // 资金来源（选填）：从某板块存款扣款；外部资金则不扣任何板块
+        let srcBoard = null, external = false;
+        if (v.cashSource === 'external') external = true;
+        else if (v.cashSource && v.cashSource.indexOf('board:') === 0) srcBoard = v.cashSource.slice(6);
+        const noteExtra = [];
+        if (srcBoard && srcBoard !== buyBoard) noteExtra.push('来源：' + boardName(srcBoard));
+        if (external) noteExtra.push('外部资金');
+        const note = (v.note ? v.note + (noteExtra.length ? ' · ' : '') : '') + noteExtra.join(' · ');
+        // 1) 先加份额（买入），2) 若选了资金来源则同步扣款——两步同步执行，确保「一边扣款一边份额也变」
         Store.addTrade({
-          board: v.board, code: v.code.trim(), action: v.action,
-          shares: shares, price: price, note: v.note,
+          board: buyBoard, code: v.code.trim(), action: v.action,
+          shares: shares, price: price, note: note,
           dca: v.action === 'buy' && v.dca === 'yes',
           planId: preset.planId || undefined,
         });
+        if (srcBoard && Store.state.boards[srcBoard]) {
+          Store.addCash(srcBoard, { type: 'expense', amount: cashAmt, note: '买入 ' + v.code.trim() + (note ? ' · ' + note : '') });
+        }
       },
     }).then(() => render());
   }
